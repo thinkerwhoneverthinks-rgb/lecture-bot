@@ -1,0 +1,11 @@
+# Core Telegram MTProto & Bot Client
+telethon>=1.36.0
+
+# Asynchronous Web Server & API Framework
+aiohttp>=3.9.5
+
+# Environment variables management
+python-dotenv>=1.0.1
+
+# High-performance JSON parser
+ujson>=5.9.0

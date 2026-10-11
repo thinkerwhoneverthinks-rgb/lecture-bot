@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Telegram Lecture Forwarder</title>
+    <!-- Telegram Mini App SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="ambient-glow"></div>
+
+    <div class="container">
+        <!-- App Header -->
+        <header class="app-header">
+            <div class="brand-section">
+                <span class="brand-icon">🚀</span>
+                <div>
+                    <h1 class="brand-title">Lecture Forwarder</h1>
+                    <p class="brand-sub">Instant Forum to Channel Delivery</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="btn-icon" id="btn-refresh" title="Refresh Lectures">🔄</button>
+                <button class="btn-icon" id="btn-settings" title="Settings">⚙️</button>
+            </div>
+        </header>
+
+        <!-- Destination Group Banner (1-Channel Limit) -->
+        <div class="dest-badge-container" id="dest-banner">
+            <div class="dest-info">
+                <span>📍 Destination:</span>
+                <span class="dest-target-name" id="dest-display-name">Not Configured</span>
+            </div>
+            <button class="dest-edit-btn" id="btn-edit-dest">Change</button>
+        </div>
+
+        <!-- System Alerts -->
+        <!-- 1. Generic Busy Alert (Triggered when backend backlog > 5) -->
+        <div class="system-alert alert-busy" id="alert-busy" style="display: none;">
+            <span>⏳</span>
+            <div>
+                <strong>Bot is busy:</strong> Many students are sending lectures at the same time. Your lectures are queued and will be sent automatically. <em>Please keep the Mini App open.</em>
+            </div>
+        </div>
+
+        <!-- 2. Pause Alert (Triggered when user minimizes / switches apps) -->
+        <div class="system-alert alert-paused" id="alert-paused" style="display: none;">
+            <span>⚠️</span>
+            <div>
+                <strong>Process Paused:</strong> Please keep the Mini App open on screen until the batch finishes sending to your group.
+            </div>
+        </div>
+
+        <!-- Live Speedometer & Progress Card -->
+        <section class="speedometer-card">
+            <div class="speedometer-header">
+                <span class="active-batch-title" id="active-batch-label">No Active Batch</span>
+                <span class="status-pill status-idle" id="speed-status-pill">Idle</span>
+            </div>
+
+            <!-- Gauges Grid -->
+            <div class="gauges-grid">
+                <div class="gauge-box gauge-download">
+                    <div class="gauge-label">⬇ Download Speed</div>
+                    <div class="gauge-value" id="download-speed-val">0.00 MB/s</div>
+                </div>
+                <div class="gauge-box gauge-upload">
+                    <div class="gauge-label">⬆ Upload Speed</div>
+                    <div class="gauge-value" id="upload-speed-val">0.00 MB/s</div>
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="progress-section">
+                <div class="progress-info">
+                    <span class="current-lecture-text" id="current-lecture-name">Select a batch to start</span>
+                    <span id="batch-progress-percent">0%</span>
+                </div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill" id="batch-progress-bar"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Adsterra Sponsored Zone (Maximizes Ad Impressions during Wait Time) -->
+        <section class="ad-container-card">
+            <div class="ad-card-header">
+                <span>⚡</span>
+                <span>Sponsored Partner</span>
+                <span>⚡</span>
+            </div>
+            <div class="ad-wrapper" id="adsterra-banner-container">
+                <!-- Adsterra Banner Slot injected by ads_config.js -->
+            </div>
+        </section>
+
+        <!-- Search Bar -->
+        <div class="search-container">
+            <div class="search-input-box">
+                <span>🔍</span>
+                <input type="text" id="lecture-search" placeholder="Search chapters, topics, or lectures...">
+            </div>
+        </div>
+
+        <!-- Topics & Lectures Navigation Tree -->
+        <main class="topics-list" id="topics-tree-container">
+            <div style="text-align: center; padding: 30px; color: var(--text-muted);">
+                🔄 Loading lecture catalog...
+            </div>
+        </main>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 class="modal-title">⚙️ Destination Settings</h3>
+                <button class="modal-close-btn" id="modal-close-btn">×</button>
+            </div>
+
+            <form id="settings-form">
+                <div class="form-group">
+                    <label for="input-group">Destination Channel / Group <span style="color: var(--accent-cyan);">(1 Channel Limit)</span></label>
+                    <input type="text" id="input-group" placeholder="@my_private_channel or -100xxxx" required>
+                    <small>Make sure you have added the bot as an <strong>Admin</strong> in this channel!</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="input-topic">Topic / Thread ID <span style="color: var(--text-muted);">(Optional for Forums)</span></label>
+                    <input type="number" id="input-topic" placeholder="e.g. 2 (Leave blank for normal channels)">
+                    <small>Only required if your destination group is a Forum with Topics.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="input-bot-token">Custom Bot Token <span class="badge-vip">Phase 3 VIP</span></label>
+                    <input type="text" id="input-bot-token" placeholder="Optional: 123456:ABC-DEF...">
+                    <small>⚡ Add your personal bot token for dedicated 0-second queue speed (Feature coming soon).</small>
+                </div>
+
+                <button type="submit" class="btn-primary" id="btn-save-settings">Save Destination</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Force Subscribe Modal (Locked Overlay) -->
+    <div class="modal-overlay" id="fsub-modal">
+        <div class="modal-card" style="text-align: center;">
+            <div style="font-size: 42px; margin-bottom: 10px;">🔒</div>
+            <h3 class="modal-title" style="margin-bottom: 8px;">Channel Subscription Required</h3>
+            <p style="color: var(--text-secondary); font-size: 13px; line-height: 1.5; margin-bottom: 18px;">
+                Is bot ke lectures ko access karne ke liye pehle hamare official channel ko join karein:
+            </p>
+            <div style="margin-bottom: 16px;">
+                <a href="#" target="_blank" class="btn-primary" id="btn-fsub-join" style="display: block; text-decoration: none; padding: 12px; margin-bottom: 10px; font-weight: 700;">
+                    📢 Join Official Channel
+                </a>
+                <button type="button" class="btn-primary" id="btn-fsub-verify" style="background: rgba(255, 255, 255, 0.08); color: var(--text-primary); border: 1px solid var(--border-color); font-weight: 600;">
+                    🔄 Verify Subscription
+                </button>
+            </div>
+            <small style="color: var(--text-muted); font-size: 11px;">
+                Channel join karne ke baad "Verify Subscription" par click karein.
+            </small>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="ads_config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
