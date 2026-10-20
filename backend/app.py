@@ -271,27 +271,14 @@ def setup_bot_handlers(client: TelegramClient):
             return
 
         welcome_text = (
-
             "👋 **Welcome to Telegram Lecture Forwarder!**\n\n"
             "📚 Lectures are stored in high quality and forwarded directly into your personal private channel/group.\n\n"
             "⚡ **Quick 2-Step Setup:**\n"
             "1️⃣ Add this bot as an **Admin** in your private channel or group.\n"
-            "2️⃣ Open the **Lecture Dashboard** below, enter your channel username/ID in **Settings ⚙️**, and pick your lectures!\n\n"
+            "2️⃣ Tap the **🚀 Lectures** button at the bottom of the chat, enter your channel username/ID in **Settings ⚙️**, and pick your lectures!\n\n"
             "⚠️ *Your progress & history is safely pinned in this chat. Please do not unpin it!*"
         )
-
-        # Open natively as a Telegram Mini App (inside Telegram instead of Chrome)
-        try:
-            from telethon import types
-            web_button = types.KeyboardButtonSimpleWebView(text="🚀 Open Lecture Dashboard", url=WEBAPP_URL)
-            markup = types.ReplyInlineMarkup(rows=[types.KeyboardButtonRow(buttons=[web_button])])
-            await event.respond(welcome_text, buttons=markup)
-        except Exception as e:
-            logger.warning(f"Could not send native webview button: {e}. Falling back to standard URL.")
-            buttons = [
-                [Button.url("🚀 Open Lecture Dashboard", WEBAPP_URL)]
-            ]
-            await event.respond(welcome_text, buttons=buttons)
+        await event.respond(welcome_text)
 
     @client.on(events.NewMessage(pattern=r'^/rescan'))
     async def rescan_handler(event):
