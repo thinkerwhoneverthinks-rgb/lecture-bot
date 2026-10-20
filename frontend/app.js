@@ -190,6 +190,32 @@ const btnFsubJoin = document.getElementById('btn-fsub-join');
 const btnFsubVerify = document.getElementById('btn-fsub-verify');
 let isForceSubscribed = true;
 
+// Admin Dashboard DOM Elements
+const btnAdminPanel = document.getElementById('btn-admin-panel');
+const adminModal = document.getElementById('admin-modal');
+const adminModalCloseBtn = document.getElementById('admin-modal-close-btn');
+const adminIdBadge = document.getElementById('admin-id-badge');
+const adminNavBtns = document.querySelectorAll('.admin-nav-btn');
+const adminTabPanes = document.querySelectorAll('.admin-tab-pane');
+const adminStatStudents = document.getElementById('admin-stat-students');
+const adminStatLectures = document.getElementById('admin-stat-lectures');
+const adminStatTopics = document.getElementById('admin-stat-topics');
+const adminStatQueue = document.getElementById('admin-stat-queue');
+const adminLastScanned = document.getElementById('admin-last-scanned');
+const btnAdminRescanTrigger = document.getElementById('btn-admin-rescan-trigger');
+const adminTopicSearch = document.getElementById('admin-topic-search');
+const adminTopicsList = document.getElementById('admin-topics-list');
+const adminCurateForm = document.getElementById('admin-curate-form');
+const curateCategory = document.getElementById('curate-category');
+const curateSubject = document.getElementById('curate-subject');
+const curateChapter = document.getElementById('curate-chapter');
+const curateStartId = document.getElementById('curate-start-id');
+const curateEndId = document.getElementById('curate-end-id');
+const curateSourceGroup = document.getElementById('curate-source-group');
+const btnCurateSubmit = document.getElementById('btn-curate-submit');
+let isAdmin = false;
+let adminCachedData = null;
+
 
 // =================================================================
 // 2. INITIALIZATION & DATA FETCHING
@@ -206,6 +232,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Check Force Subscribe requirement
     await checkForceSubscribe();
+
+    // Check Admin status (activates in-app admin suite if USER_ID == ADMIN_ID)
+    await checkAdminStatus();
 
     // Load initial data
     await loadUserData();
@@ -259,6 +288,56 @@ function setupEventListeners() {
 
     // Search input
     lectureSearchInput.addEventListener('input', handleSearchFilter);
+
+    // Admin Dashboard triggers & tabs
+    if (btnAdminPanel) {
+        btnAdminPanel.addEventListener('click', openAdminModal);
+    }
+    if (adminModalCloseBtn) {
+        adminModalCloseBtn.addEventListener('click', closeAdminModal);
+    }
+    if (adminModal) {
+        adminModal.addEventListener('click', (e) => {
+            if (e.target === adminModal) closeAdminModal();
+        });
+    }
+
+    // Admin Tabs switcher
+    adminNavBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetTab = btn.getAttribute('data-tab');
+            adminNavBtns.forEach(b => b.classList.remove('active'));
+            adminTabPanes.forEach(pane => {
+                pane.classList.remove('active');
+                pane.style.display = 'none';
+            });
+            btn.classList.add('active');
+            const activePane = document.getElementById(targetTab);
+            if (activePane) {
+                activePane.classList.add('active');
+                activePane.style.display = 'block';
+            }
+        });
+    });
+
+    // Admin Re-Scan button
+    if (btnAdminRescanTrigger) {
+        btnAdminRescanTrigger.addEventListener('click', handleAdminRescan);
+    }
+
+    // Admin Topic Search Filter
+    if (adminTopicSearch) {
+        adminTopicSearch.addEventListener('input', () => {
+            if (adminCachedData) {
+                renderAdminTopicsList(adminCachedData.topics || [], adminCachedData.hidden_topics || []);
+            }
+        });
+    }
+
+    // Admin Add Chapter Form
+    if (adminCurateForm) {
+        adminCurateForm.addEventListener('submit', handleCurateSubmit);
+    }
 
     // Visibility Change Handling (Key requirement: Stop progress when app is closed/hidden)
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -825,4 +904,283 @@ function showMockCatalog() {
     };
     appCatalog = mock;
     renderCatalog(mock);
+}
+
+
+// =================================================================
+// 9. ADMIN COMMAND CENTER CONTROLLER (ADMIN_ID ONLY)
+// =================================================================
+
+async function checkAdminStatus() {
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/info?user_id=${USER_ID}`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.is_admin) {
+                isAdmin = true;
+                adminCachedData = data;
+                if (btnAdminPanel) {
+                    btnAdminPanel.style.display = 'inline-flex';
+                }
+                if (adminIdBadge) {
+                    adminIdBadge.textContent = `Admin ID: ${data.admin_id || USER_ID}`;
+                }
+            }
+        }
+    } catch (e) {
+        // Normal students receive 403 or network fallback silently
+        console.debug('Admin check note:', e);
+    }
+}
+
+function openAdminModal() {
+    if (!isAdmin || !adminModal) return;
+    adminModal.classList.add('active');
+    loadAdminData();
+}
+
+function closeAdminModal() {
+    if (adminModal) adminModal.classList.remove('active');
+}
+
+async function loadAdminData() {
+    if (!isAdmin) return;
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/info?user_id=${USER_ID}`);
+        if (res.ok) {
+            const data = await res.json();
+            adminCachedData = data;
+            renderAdminStats(data);
+            renderAdminTopicsList(data.topics || [], data.hidden_topics || []);
+        }
+    } catch (e) {
+        console.error('Failed to load admin metrics:', e);
+    }
+}
+
+function renderAdminStats(data) {
+    if (adminStatStudents) adminStatStudents.textContent = data.total_students || 0;
+    if (adminStatLectures) adminStatLectures.textContent = data.total_lectures || 0;
+    if (adminStatTopics) {
+        const visibleCount = (data.topics || []).filter(t => !t.is_hidden).length;
+        adminStatTopics.textContent = `${visibleCount}/${(data.topics || []).length}`;
+    }
+    if (adminStatQueue) {
+        const backlog = data.queue?.active_count || 0;
+        adminStatQueue.textContent = backlog > 0 ? `${backlog} busy` : '0 idle';
+    }
+    if (adminLastScanned) {
+        if (data.last_scanned) {
+            const date = new Date(data.last_scanned);
+            adminLastScanned.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' (' + date.toLocaleDateString() + ')';
+        } else {
+            adminLastScanned.textContent = 'Auto-Indexed';
+        }
+    }
+}
+
+function renderAdminTopicsList(topics, hiddenTopics) {
+    if (!adminTopicsList) return;
+    adminTopicsList.innerHTML = '';
+
+    if (!topics || topics.length === 0) {
+        adminTopicsList.innerHTML = '<div class="admin-loading-row">No topics discovered in forum yet.</div>';
+        return;
+    }
+
+    const filterVal = (adminTopicSearch?.value || '').toLowerCase().trim();
+
+    topics.forEach((topic) => {
+        const title = topic.title || 'Untitled Topic';
+        const category = topic.category || 'General';
+        const threadId = topic.thread_id || 1;
+        const lectureCount = topic.lecture_count || 0;
+        const topicKey = topic.thread_id || topic.title;
+
+        if (filterVal) {
+            const match = title.toLowerCase().includes(filterVal) ||
+                          category.toLowerCase().includes(filterVal) ||
+                          String(threadId).includes(filterVal);
+            if (!match) return;
+        }
+
+        const isHidden = topic.is_hidden || (hiddenTopics && (
+            hiddenTopics.includes(String(threadId)) ||
+            hiddenTopics.includes(title) ||
+            hiddenTopics.includes(category)
+        ));
+
+        const row = document.createElement('div');
+        row.className = `admin-topic-row ${isHidden ? 'hidden-topic' : ''}`;
+        row.id = `admin-topic-row-${threadId}`;
+
+        row.innerHTML = `
+            <div class="admin-topic-meta">
+                <div class="admin-topic-name">${escapeHtml(title)}</div>
+                <div class="admin-topic-sub">
+                    <span class="topic-category-badge">${escapeHtml(category)}</span>
+                    <span>• ${lectureCount} lectures</span>
+                    <span>• Thread ID: ${threadId}</span>
+                    <span class="status-badge" style="font-weight:700; color: ${isHidden ? '#ef4444' : '#10b981'}">
+                        ${isHidden ? '🙈 Hidden' : '👁️ Visible'}
+                    </span>
+                </div>
+            </div>
+            <label class="admin-switch">
+                <input type="checkbox" class="topic-visibility-toggle" data-topic-key="${escapeHtml(String(topicKey))}" ${isHidden ? '' : 'checked'}>
+                <span class="admin-slider"></span>
+            </label>
+        `;
+
+        const checkbox = row.querySelector('.topic-visibility-toggle');
+        checkbox.addEventListener('change', async (e) => {
+            const checked = e.target.checked;
+            await toggleTopicVisibility(topicKey, checked, row);
+        });
+
+        adminTopicsList.appendChild(row);
+    });
+}
+
+async function toggleTopicVisibility(topicKey, isNowVisible, rowEl) {
+    try {
+        const statusSpan = rowEl.querySelector('.status-badge');
+        if (statusSpan) statusSpan.textContent = 'Updating...';
+
+        const res = await fetch(`${API_BASE}/api/admin/toggle_topic`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: USER_ID,
+                topic_key: topicKey
+            })
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            const isHidden = !isNowVisible;
+            if (rowEl) {
+                rowEl.classList.toggle('hidden-topic', isHidden);
+                if (statusSpan) {
+                    statusSpan.textContent = isHidden ? '🙈 Hidden' : '👁️ Visible';
+                    statusSpan.style.color = isHidden ? '#ef4444' : '#10b981';
+                }
+            }
+            if (data.topics) {
+                renderAdminStats({
+                    ...adminCachedData,
+                    topics: data.topics,
+                    hidden_topics: data.hidden_topics
+                });
+            }
+            // Refresh catalog outside modal
+            await loadCatalog();
+        } else {
+            alert('Failed to update topic visibility. Please try again.');
+        }
+    } catch (e) {
+        console.error('Error toggling topic:', e);
+        alert('Network error while toggling topic.');
+    }
+}
+
+async function handleAdminRescan() {
+    if (!btnAdminRescanTrigger) return;
+    const originalText = btnAdminRescanTrigger.textContent;
+    btnAdminRescanTrigger.disabled = true;
+    btnAdminRescanTrigger.textContent = '🔄 Re-scanning Forum... (Please wait)';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/rescan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: USER_ID })
+        });
+
+        if (res.ok) {
+            btnAdminRescanTrigger.textContent = '✅ Re-Scan Complete!';
+            await loadAdminData();
+            await loadCatalog();
+            setTimeout(() => {
+                btnAdminRescanTrigger.textContent = originalText;
+                btnAdminRescanTrigger.disabled = false;
+            }, 2500);
+        } else {
+            btnAdminRescanTrigger.textContent = '❌ Failed';
+            setTimeout(() => {
+                btnAdminRescanTrigger.textContent = originalText;
+                btnAdminRescanTrigger.disabled = false;
+            }, 2000);
+        }
+    } catch (e) {
+        console.error(e);
+        btnAdminRescanTrigger.textContent = '⚠️ Network Error';
+        setTimeout(() => {
+            btnAdminRescanTrigger.textContent = originalText;
+            btnAdminRescanTrigger.disabled = false;
+        }, 2000);
+    }
+}
+
+async function handleCurateSubmit(e) {
+    e.preventDefault();
+    if (!btnCurateSubmit) return;
+
+    const category = curateCategory.value.trim();
+    const subject = curateSubject.value.trim();
+    const chapter = curateChapter.value.trim();
+    const startId = parseInt(curateStartId.value);
+    const endId = parseInt(curateEndId.value);
+    const sourceGroup = curateSourceGroup ? curateSourceGroup.value.trim() : '';
+
+    if (!category || !subject || !chapter || isNaN(startId) || isNaN(endId)) {
+        alert('Please fill in all required fields.');
+        return;
+    }
+
+    if (startId > endId) {
+        alert('Start Message ID must be less than or equal to End Message ID.');
+        return;
+    }
+
+    const originalBtnText = btnCurateSubmit.textContent;
+    btnCurateSubmit.disabled = true;
+    btnCurateSubmit.textContent = '⏳ Saving & Indexing Range...';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/admin/add_chapter`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: USER_ID,
+                category,
+                subject,
+                chapter,
+                start_id: startId,
+                end_id: endId,
+                source_group: sourceGroup || null
+            })
+        });
+
+        if (res.ok) {
+            btnCurateSubmit.textContent = '✅ Chapter Indexed!';
+            adminCurateForm.reset();
+            await loadAdminData();
+            await loadCatalog();
+            alert(`🎉 Success! Chapter '${chapter}' (${startId}-${endId}) added to ${subject} [${category}].`);
+            setTimeout(() => {
+                btnCurateSubmit.textContent = originalBtnText;
+                btnCurateSubmit.disabled = false;
+            }, 2000);
+        } else {
+            alert('Could not add chapter. Check server logs.');
+            btnCurateSubmit.textContent = originalBtnText;
+            btnCurateSubmit.disabled = false;
+        }
+    } catch (err) {
+        console.error(err);
+        alert('Network error while saving chapter.');
+        btnCurateSubmit.textContent = originalBtnText;
+        btnCurateSubmit.disabled = false;
+    }
 }

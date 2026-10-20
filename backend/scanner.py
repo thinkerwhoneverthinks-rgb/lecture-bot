@@ -146,6 +146,99 @@ def load_catalog_config() -> dict:
     }
 
 
+CATALOG_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalog_config.json")
+
+
+def save_catalog_config(config: dict) -> bool:
+    """Saves updated catalog configuration directly to disk."""
+    try:
+        with open(CATALOG_CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        logger.info(f"💾 Updated {CATALOG_CONFIG_FILE}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save catalog config: {e}")
+        return False
+
+
+def toggle_hidden_topic(topic_identifier) -> dict:
+    """Toggles a topic between hidden and visible in catalog_config.json and updates cache."""
+    global LECTURE_MAP_CACHE
+    config = load_catalog_config()
+    hidden = list(config.get("hidden_topics", []))
+
+    found = False
+    new_hidden = []
+    target_str = str(topic_identifier).strip().lower()
+    for item in hidden:
+        if str(item).strip().lower() == target_str:
+            found = True
+        else:
+            new_hidden.append(item)
+
+    if not found:
+        if isinstance(topic_identifier, str) and topic_identifier.strip().lstrip("-").isdigit():
+            new_hidden.append(int(topic_identifier.strip()))
+        else:
+            new_hidden.append(topic_identifier)
+
+    config["hidden_topics"] = new_hidden
+    save_catalog_config(config)
+
+    # Immediately update in-memory cache
+    hidden_set = {str(h).strip().lower() for h in new_hidden}
+    all_topics = LECTURE_MAP_CACHE.get("all_topics", LECTURE_MAP_CACHE.get("topics", []))
+    for t in all_topics:
+        t_id = str(t.get("thread_id", "")).strip().lower()
+        t_title = str(t.get("title", "")).strip().lower()
+        t_cat = str(t.get("category", "")).strip().lower()
+        t["is_hidden"] = (t_id in hidden_set) or (t_title in hidden_set) or (bool(t_cat) and t_cat in hidden_set)
+
+    visible_topics = [t for t in all_topics if not t.get("is_hidden")]
+    LECTURE_MAP_CACHE["topics"] = visible_topics
+    LECTURE_MAP_CACHE["all_topics"] = all_topics
+    LECTURE_MAP_CACHE["total_lectures"] = sum(t.get("lecture_count", 0) for t in visible_topics)
+    return config
+
+
+def add_curated_chapter(category_name: str, subject_name: str, chapter_name: str, msg_range: list, source_group=None) -> dict:
+    """Appends a new curated chapter into categories hierarchy in catalog_config.json."""
+    config = load_catalog_config()
+    categories = config.setdefault("categories", [])
+
+    target_cat = None
+    for c in categories:
+        if c.get("name", "").strip().lower() == category_name.strip().lower():
+            target_cat = c
+            break
+    if not target_cat:
+        target_cat = {"name": category_name.strip(), "subjects": []}
+        categories.append(target_cat)
+
+    subjects = target_cat.setdefault("subjects", [])
+    target_subj = None
+    for s in subjects:
+        if s.get("name", "").strip().lower() == subject_name.strip().lower():
+            target_subj = s
+            break
+    if not target_subj:
+        target_subj = {"name": subject_name.strip(), "chapters": []}
+        subjects.append(target_subj)
+
+    start_id = min(int(msg_range[0]), int(msg_range[1]))
+    end_id = max(int(msg_range[0]), int(msg_range[1]))
+    new_chapter = {
+        "name": chapter_name.strip(),
+        "msg_range": [start_id, end_id]
+    }
+    if source_group:
+        new_chapter["source_group"] = parse_chat_id(source_group)
+
+    target_subj.setdefault("chapters", []).append(new_chapter)
+    save_catalog_config(config)
+    return config
+
+
 def is_in_topic(msg, target_topic_id: int) -> bool:
     """Checks whether a message belongs to a specific forum thread/topic."""
     if not target_topic_id:
@@ -367,10 +460,18 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
     logger.info(f"🔍 Starting Hybrid Master Forum scan (default chat: {forum_chat_id})...")
 
     config = load_catalog_config()
-    hidden_topics = set(config.get("hidden_topics", []))
+    hidden_topics_set = {str(h).strip().lower() for h in config.get("hidden_topics", [])}
     topics_data = []
-    total_lectures_count = 0
     manually_covered_topics = set()
+
+    def check_is_hidden(thread_id, title, category=None):
+        if str(thread_id).strip().lower() in hidden_topics_set:
+            return True
+        if str(title).strip().lower() in hidden_topics_set:
+            return True
+        if category and str(category).strip().lower() in hidden_topics_set:
+            return True
+        return False
 
     # -------------------------------------------------------------
     # 1. Process Custom Categories & Hierarchical Subjects
@@ -398,16 +499,17 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
                 subj_count += ch_count
 
             if subj_sections:
+                is_hid = check_is_hidden(subj_thread_id, subj_title, cat_name)
                 topics_data.append({
                     "thread_id": subj_thread_id,
                     "category": cat_name,
                     "title": subj_title,
                     "sections": subj_sections,
                     "lecture_count": subj_count,
-                    "from_chat": subj_source
+                    "from_chat": subj_source,
+                    "is_hidden": is_hid
                 })
-                total_lectures_count += subj_count
-                logger.info(f"✅ Added curated subject: '{subj_title}' [{cat_name}] with {subj_count} lectures.")
+                logger.info(f"✅ Added curated subject: '{subj_title}' [{cat_name}] with {subj_count} lectures (hidden={is_hid}).")
 
     # -------------------------------------------------------------
     # 2. Process Flat Custom Topics (if configured)
@@ -432,16 +534,17 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
             top_count += ch_count
 
         if top_sections:
+            is_hid = check_is_hidden(top_thread_id, top_title, top_cat)
             topics_data.append({
                 "thread_id": top_thread_id,
                 "category": top_cat,
                 "title": top_title,
                 "sections": top_sections,
                 "lecture_count": top_count,
-                "from_chat": top_source
+                "from_chat": top_source,
+                "is_hidden": is_hid
             })
-            total_lectures_count += top_count
-            logger.info(f"✅ Added custom topic: '{top_title}' with {top_count} lectures.")
+            logger.info(f"✅ Added custom topic: '{top_title}' with {top_count} lectures (hidden={is_hid}).")
 
     # -------------------------------------------------------------
     # 3. Auto-Detect Remaining Topics from Forum Supergroup
@@ -455,10 +558,6 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
                 thread_id = t["thread_id"]
                 topic_title = t["title"]
 
-                # Check if hidden or already covered manually
-                if thread_id in hidden_topics or topic_title in hidden_topics:
-                    logger.info(f"🙈 Skipping hidden topic: '{topic_title}' (ID {thread_id})")
-                    continue
                 if thread_id in manually_covered_topics:
                     logger.info(f"⏩ Topic '{topic_title}' (ID {thread_id}) already curated in catalog_config.json")
                     continue
@@ -472,15 +571,16 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
                 }, forum_chat_id)
 
                 if auto_sections:
+                    is_hid = check_is_hidden(thread_id, topic_title, None)
                     topics_data.append({
                         "thread_id": thread_id,
                         "category": None,
                         "title": topic_title,
                         "sections": auto_sections,
                         "lecture_count": auto_count,
-                        "from_chat": forum_chat_id
+                        "from_chat": forum_chat_id,
+                        "is_hidden": is_hid
                     })
-                    total_lectures_count += auto_count
 
         except Exception as e:
             logger.debug(f"Auto-scan forum topics note: {e}")
@@ -488,13 +588,17 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
     # -------------------------------------------------------------
     # 4. Update In-Memory Cache and Pinned Summary in Forum Group
     # -------------------------------------------------------------
+    visible_topics = [t for t in topics_data if not t.get("is_hidden")]
+    total_visible_lectures = sum(t.get("lecture_count", 0) for t in visible_topics)
+
     LECTURE_MAP_CACHE = {
-        "topics": topics_data,
-        "total_lectures": total_lectures_count,
+        "topics": visible_topics,
+        "all_topics": topics_data,
+        "total_lectures": total_visible_lectures,
         "last_scanned": datetime.datetime.utcnow().isoformat()
     }
 
-    logger.info(f"🎉 Catalog ready! Total topics: {len(topics_data)}, Total lectures: {total_lectures_count}")
+    logger.info(f"🎉 Catalog ready! Total topics: {len(topics_data)} ({len(visible_topics)} visible), Total lectures: {total_visible_lectures}")
 
     # Update pinned summary in Master Forum Group if possible
     if forum_chat_id:

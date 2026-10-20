@@ -22,6 +22,7 @@
                 </div>
             </div>
             <div class="header-actions">
+                <button class="btn-icon btn-admin-badge" id="btn-admin-panel" style="display: none;" title="Admin Dashboard">👑</button>
                 <button class="btn-icon" id="btn-theme-toggle" title="Toggle Light/Dark Theme">🌙</button>
                 <button class="btn-icon" id="btn-refresh" title="Refresh Lectures">🔄</button>
                 <button class="btn-icon" id="btn-settings" title="Settings">⚙️</button>
@@ -164,6 +165,125 @@
             <small style="color: var(--text-muted); font-size: 11px;">
                 Channel join karne ke baad "Verify Subscription" par click karein.
             </small>
+        </div>
+    </div>
+
+    <!-- Admin Control Center Modal (Only visible to verified ADMIN_ID) -->
+    <div class="modal-overlay" id="admin-modal">
+        <div class="modal-card modal-admin-card">
+            <div class="modal-header">
+                <div class="admin-modal-title-wrap">
+                    <span class="admin-crown-icon">👑</span>
+                    <div>
+                        <h3 class="modal-title">Admin Command Center</h3>
+                        <p class="admin-modal-sub" id="admin-id-badge">Verified Administrator</p>
+                    </div>
+                </div>
+                <button class="modal-close-btn" id="admin-modal-close-btn">×</button>
+            </div>
+
+            <!-- Tab Navigation Bar -->
+            <div class="admin-nav-tabs">
+                <button class="admin-nav-btn active" data-tab="admin-tab-stats">📊 Overview</button>
+                <button class="admin-nav-btn" data-tab="admin-tab-topics">👁️ Topics & Visibility</button>
+                <button class="admin-nav-btn" data-tab="admin-tab-curate">➕ Add Chapter</button>
+            </div>
+
+            <!-- Tab 1: Live Overview & Stats -->
+            <div class="admin-tab-pane active" id="admin-tab-stats">
+                <div class="admin-stats-grid">
+                    <div class="admin-stat-card">
+                        <span class="stat-icon">👥</span>
+                        <div class="stat-val" id="admin-stat-students">0</div>
+                        <div class="stat-lbl">Active Students</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <span class="stat-icon">📚</span>
+                        <div class="stat-val" id="admin-stat-lectures">0</div>
+                        <div class="stat-lbl">Indexed Lectures</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <span class="stat-icon">🗂️</span>
+                        <div class="stat-val" id="admin-stat-topics">0</div>
+                        <div class="stat-lbl">Visible Topics</div>
+                    </div>
+                    <div class="admin-stat-card">
+                        <span class="stat-icon">⚡</span>
+                        <div class="stat-val" id="admin-stat-queue">0</div>
+                        <div class="stat-lbl">Queue Backlog</div>
+                    </div>
+                </div>
+
+                <div class="admin-info-box">
+                    <div class="admin-info-row">
+                        <span>🕒 Last Catalog Scan:</span>
+                        <strong id="admin-last-scanned">Never</strong>
+                    </div>
+                    <div class="admin-info-row">
+                        <span>🛡️ Auto-Discovery:</span>
+                        <span class="badge-tag">Enabled</span>
+                    </div>
+                </div>
+
+                <div style="margin-top: 14px;">
+                    <button class="btn-primary" id="btn-admin-rescan-trigger" style="width: 100%;">
+                        🔄 Re-Scan Forum & Refresh Catalog
+                    </button>
+                    <p class="admin-hint-text">Trigger an instant background re-index of Master Forum topics and message IDs.</p>
+                </div>
+            </div>
+
+            <!-- Tab 2: Topics & Visibility Manager -->
+            <div class="admin-tab-pane" id="admin-tab-topics" style="display: none;">
+                <div class="admin-topics-toolbar">
+                    <input type="text" id="admin-topic-search" class="admin-search-input" placeholder="Search topics to toggle...">
+                </div>
+                <div class="admin-topics-list" id="admin-topics-list">
+                    <div class="admin-loading-row">Loading topics...</div>
+                </div>
+                <p class="admin-hint-text">Toggling off instantly hides the topic from all students without deleting any lecture files.</p>
+            </div>
+
+            <!-- Tab 3: Curate / Add Chapter -->
+            <div class="admin-tab-pane" id="admin-tab-curate" style="display: none;">
+                <form id="admin-curate-form">
+                    <div class="form-group">
+                        <label for="curate-category">Coaching / Category Name</label>
+                        <input type="text" id="curate-category" placeholder="e.g. Physics Wallah, Allen, NEET 2026" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="curate-subject">Subject</label>
+                        <input type="text" id="curate-subject" placeholder="e.g. Physics, Organic Chemistry" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="curate-chapter">Chapter / Topic Title</label>
+                        <input type="text" id="curate-chapter" placeholder="e.g. 01 - Kinematics 1D" required>
+                    </div>
+
+                    <div class="form-row-2">
+                        <div class="form-group">
+                            <label for="curate-start-id">Start Message ID</label>
+                            <input type="number" id="curate-start-id" placeholder="e.g. 100" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="curate-end-id">End Message ID</label>
+                            <input type="number" id="curate-end-id" placeholder="e.g. 145" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="curate-source-group">Source Channel / Forum <span style="color: var(--text-muted);">(Optional)</span></label>
+                        <input type="text" id="curate-source-group" placeholder="Leave empty to use Master Forum default">
+                        <small>Provide channel username or -100 ID if lectures are stored in a secondary channel.</small>
+                    </div>
+
+                    <button type="submit" class="btn-primary" id="btn-curate-submit" style="width: 100%;">
+                        ➕ Save Chapter & Index Range
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
 

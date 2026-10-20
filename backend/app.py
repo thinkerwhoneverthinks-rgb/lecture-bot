@@ -22,7 +22,13 @@ from config import (
 from telethon.tl.functions.channels import GetParticipantRequest
 from telethon.errors import UserNotParticipantError
 from telethon import errors
-from scanner import scan_master_forum, LECTURE_MAP_CACHE
+from scanner import (
+    scan_master_forum,
+    LECTURE_MAP_CACHE,
+    load_catalog_config,
+    toggle_hidden_topic,
+    add_curated_chapter
+)
 from user_storage import (
     get_or_create_user_data,
     save_user_data,
@@ -238,6 +244,119 @@ async def api_queue_status(request):
 
 
 # =================================================================
+# ADMIN REST API HANDLERS (Authenticated via ADMIN_ID)
+# =================================================================
+
+def is_request_admin(user_id) -> bool:
+    if not ADMIN_ID or not user_id:
+        return False
+    try:
+        return int(user_id) == int(ADMIN_ID)
+    except (ValueError, TypeError):
+        return False
+
+
+async def api_admin_info(request):
+    """Returns comprehensive system metrics, topic list, and curation config for Admin."""
+    user_id = request.query.get("user_id")
+    if not is_request_admin(user_id):
+        return web.json_response({"error": "Unauthorized", "is_admin": False}, status=403, headers={"Access-Control-Allow-Origin": "*"})
+
+    config = load_catalog_config()
+    users = get_all_registered_users()
+    q = get_queue_status()
+
+    return web.json_response({
+        "is_admin": True,
+        "admin_id": ADMIN_ID,
+        "total_students": len(users),
+        "total_lectures": LECTURE_MAP_CACHE.get("total_lectures", 0),
+        "topics": LECTURE_MAP_CACHE.get("all_topics", LECTURE_MAP_CACHE.get("topics", [])),
+        "hidden_topics": [str(h) for h in config.get("hidden_topics", [])],
+        "categories": config.get("categories", []),
+        "last_scanned": LECTURE_MAP_CACHE.get("last_scanned"),
+        "queue": q
+    }, headers={"Access-Control-Allow-Origin": "*"})
+
+
+async def api_admin_toggle_topic(request):
+    """Toggles topic visibility (hide/show) in catalog_config.json and updates catalog."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    user_id = body.get("user_id")
+    topic_key = body.get("topic_key")
+    if not is_request_admin(user_id):
+        return web.json_response({"error": "Unauthorized"}, status=403, headers={"Access-Control-Allow-Origin": "*"})
+
+    if not topic_key:
+        return web.json_response({"error": "Missing topic_key"}, status=400)
+
+    new_config = toggle_hidden_topic(topic_key)
+
+    return web.json_response({
+        "success": True,
+        "hidden_topics": [str(h) for h in new_config.get("hidden_topics", [])],
+        "topics": LECTURE_MAP_CACHE.get("all_topics", LECTURE_MAP_CACHE.get("topics", []))
+    }, headers={"Access-Control-Allow-Origin": "*"})
+
+
+async def api_admin_add_chapter(request):
+    """Adds a new chapter and message range into catalog_config.json from the Mini App."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    user_id = body.get("user_id")
+    category = body.get("category", "General Courses")
+    subject = body.get("subject", "General Subject")
+    chapter = body.get("chapter", "New Chapter")
+    start_id = body.get("start_id")
+    end_id = body.get("end_id")
+    source_group = body.get("source_group")
+
+    if not is_request_admin(user_id):
+        return web.json_response({"error": "Unauthorized"}, status=403, headers={"Access-Control-Allow-Origin": "*"})
+
+    if not start_id or not end_id:
+        return web.json_response({"error": "start_id and end_id are required"}, status=400)
+
+    add_curated_chapter(category, subject, chapter, [start_id, end_id], source_group)
+    if main_client:
+        await scan_master_forum(main_client)
+
+    return web.json_response({
+        "success": True,
+        "topics": LECTURE_MAP_CACHE.get("all_topics", LECTURE_MAP_CACHE.get("topics", [])),
+        "total_lectures": LECTURE_MAP_CACHE.get("total_lectures", 0)
+    }, headers={"Access-Control-Allow-Origin": "*"})
+
+
+async def api_admin_rescan(request):
+    """Triggers immediate re-indexing of Master Forum and catalog_config.json from UI."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    user_id = body.get("user_id")
+    if not is_request_admin(user_id):
+        return web.json_response({"error": "Unauthorized"}, status=403, headers={"Access-Control-Allow-Origin": "*"})
+
+    if main_client:
+        await scan_master_forum(main_client)
+
+    return web.json_response({
+        "success": True,
+        "topics": LECTURE_MAP_CACHE.get("all_topics", LECTURE_MAP_CACHE.get("topics", [])),
+        "total_lectures": LECTURE_MAP_CACHE.get("total_lectures", 0)
+    }, headers={"Access-Control-Allow-Origin": "*"})
+
+
+# =================================================================
 # TELEGRAM BOT COMMAND HANDLERS
 # =================================================================
 
@@ -450,6 +569,10 @@ async def create_app():
     app.router.add_post("/api/queue_one", api_queue_one)
     app.router.add_post("/api/complete_batch", api_complete_batch)
     app.router.add_get("/api/queue_status", api_queue_status)
+    app.router.add_get("/api/admin/info", api_admin_info)
+    app.router.add_post("/api/admin/toggle_topic", api_admin_toggle_topic)
+    app.router.add_post("/api/admin/add_chapter", api_admin_add_chapter)
+    app.router.add_post("/api/admin/rescan", api_admin_rescan)
 
     # Serve Frontend static directory if present
     frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
