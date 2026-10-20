@@ -356,7 +356,10 @@ async def create_app():
     frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
     if os.path.exists(frontend_dir):
         logger.info(f"Serving static frontend files from: {frontend_dir}")
-        app.router.add_static("/", path=frontend_dir, show_index=True)
+        async def index_handler(request):
+            return web.FileResponse(os.path.join(frontend_dir, "index.html"))
+        app.router.add_get("/", index_handler)
+        app.router.add_static("/", path=frontend_dir, show_index=False)
 
     return app
 
