@@ -128,10 +128,12 @@ async def process_job(client: TelegramClient, job: dict) -> bool:
     message_id = job["message_id"]
     lecture_id = job["lecture_id"]
     title = job["title"]
-
     try:
         # Resolve destination
-        dest_entity = await client.get_entity(dest_chat)
+        target_chat = dest_chat
+        if isinstance(dest_chat, str) and (dest_chat.startswith("-100") or dest_chat.lstrip("-").isdigit()):
+            target_chat = int(dest_chat)
+        dest_entity = await client.get_entity(target_chat)
 
         # Forward or Copy message
         forward_kwargs = {

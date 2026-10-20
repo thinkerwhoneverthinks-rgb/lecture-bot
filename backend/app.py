@@ -2,12 +2,7 @@ import os
 import json
 import asyncio
 from aiohttp import web
-from telethon import TelegramClient, events
-from telethon.tl.types import (
-    KeyboardButtonWebView,
-    ReplyInlineMarkup,
-    KeyboardButtonRow
-)
+from telethon import TelegramClient, events, Button
 
 from config import (
     API_ID,
@@ -258,15 +253,13 @@ def setup_bot_handlers(client: TelegramClient):
                 f"👉 **{FORCE_SUB_CHANNEL}**\n\n"
                 "Channel join karne ke baad neeche diye gaye **'🔄 Verify & Start'** button par click karein."
             )
-            from telethon.tl.types import KeyboardButtonUrl, ReplyInlineMarkup, KeyboardButtonRow
             bot_me = await client.get_me()
             bot_username = bot_me.username or "bot"
             buttons = [
-                [KeyboardButtonUrl(text="📢 Join Updates Channel", url=join_url)],
-                [KeyboardButtonUrl(text="🔄 Verify & Start", url=f"https://t.me/{bot_username}?start=verify")]
+                [Button.url("📢 Join Updates Channel", join_url)],
+                [Button.url("🔄 Verify & Start", f"https://t.me/{bot_username}?start=verify")]
             ]
-            markup = ReplyInlineMarkup(rows=[KeyboardButtonRow(buttons=row) for row in buttons])
-            await event.respond(fsub_text, buttons=markup)
+            await event.respond(fsub_text, buttons=buttons)
             return
 
         welcome_text = (
@@ -279,18 +272,10 @@ def setup_bot_handlers(client: TelegramClient):
             "⚠️ *Your progress & history is safely pinned in this chat. Please do not unpin it!*"
         )
 
-        # Inline button with WebAppInfo
-        try:
-            from telethon.tl.types import KeyboardButtonWebView, ReplyInlineMarkup, KeyboardButtonRow
-            button = KeyboardButtonWebView(text="🚀 Open Lecture Dashboard", url=WEBAPP_URL)
-            markup = ReplyInlineMarkup(rows=[KeyboardButtonRow(buttons=[button])])
-            await event.respond(welcome_text, buttons=markup)
-        except Exception as e:
-            logger.warning(f"Failed to send WebApp button: {e}. Falling back to standard URL button.")
-            from telethon.tl.types import KeyboardButtonUrl
-            button = KeyboardButtonUrl(text="🚀 Open Lecture Dashboard", url=WEBAPP_URL)
-            markup = ReplyInlineMarkup(rows=[KeyboardButtonRow(buttons=[button])])
-            await event.respond(welcome_text, buttons=markup)
+        buttons = [
+            [Button.url("🚀 Open Lecture Dashboard", WEBAPP_URL)]
+        ]
+        await event.respond(welcome_text, buttons=buttons)
 
     @client.on(events.NewMessage(pattern=r'^/rescan'))
     async def rescan_handler(event):
