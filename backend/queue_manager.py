@@ -74,6 +74,55 @@ async def add_forward_job(user_id: int, dest_chat, dest_topic, from_chat: int, m
     return job
 
 
+async def start_queue_workers(clients: list):
+    """
+    Spawns background dispatcher that processes jobs with 0.05s delay,
+    round-robin rotates across worker bot tokens, and gracefully handles 429 FloodWait.
+    """
+    global CLIENT_POOL, current_worker_index
+    CLIENT_POOL = clients
+
+    if not CLIENT_POOL:
+        logger.error("No Telegram clients available in pool for queue worker!")
+        return
+
+    logger.info(f"🚀 Queue worker started with {len(CLIENT_POOL)} bot client(s) in pool.")
+
+    while True:
+        try:
+            job = await JOB_QUEUE.get()
+
+            # Check per-chat rate limiting to avoid 429 FloodWait on same chat
+            dest_chat = str(job["dest_chat"])
+            if is_chat_rate_limited(dest_chat):
+                logger.warning(f"⏳ Chat {dest_chat} hit 20 msg/min threshold. Delaying job for 3s...")
+                await asyncio.sleep(3.0)
+                await JOB_QUEUE.put(job)
+                JOB_QUEUE.task_done()
+                continue
+
+            # Pick next client via Round-Robin
+            client = CLIENT_POOL[current_worker_index % len(CLIENT_POOL)]
+            current_worker_index += 1
+
+            # Dispatch forward
+            success = await process_job(client, job)
+            if not success and job["retries"] < 3:
+                job["retries"] += 1
+                logger.info(f"🔁 Re-queuing job '{job['title']}' (retry {job['retries']}/3)")
+                await JOB_QUEUE.put(job)
+
+            JOB_QUEUE.task_done()
+            # 50ms delay between dispatches
+            await asyncio.sleep(QUEUE_DISPATCH_INTERVAL)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Unexpected error in queue worker: {e}", exc_info=True)
+            await asyncio.sleep(1.0)
+
+
 async def process_job(client: TelegramClient, job: dict) -> bool:
     """
     Executes delivery of one lecture to the user's destination chat.
