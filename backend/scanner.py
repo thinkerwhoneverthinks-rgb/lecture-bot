@@ -146,12 +146,64 @@ def load_catalog_config() -> dict:
     }
 
 
+def is_in_topic(msg, target_topic_id: int) -> bool:
+    """Checks whether a message belongs to a specific forum thread/topic."""
+    if not target_topic_id:
+        return True
+    if msg.id == target_topic_id:
+        return True
+    reply = getattr(msg, 'reply_to', None)
+    if not reply:
+        # In Telegram supergroups, General topic messages have no reply_to
+        return target_topic_id == 1
+    top_id = getattr(reply, 'reply_to_top_id', None) or getattr(reply, 'reply_to_msg_id', None)
+    return top_id == target_topic_id
+
+
+async def detect_max_message_id(client: TelegramClient, entity) -> int:
+    """
+    Finds the highest message ID in the group without triggering GetHistoryRequest.
+    Tests exponential candidate IDs in one batch.
+    """
+    probes = [10, 25, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000]
+    try:
+        msgs = await client.get_messages(entity, ids=probes)
+        valid_ids = [m.id for m in msgs if m and getattr(m, 'id', None) and not getattr(m, 'empty', False)]
+        if not valid_ids:
+            return 100  # Default fallback range
+        highest_probe = max(valid_ids)
+        fine_probes = list(range(highest_probe, highest_probe + 150, 25))
+        fine_msgs = await client.get_messages(entity, ids=fine_probes)
+        fine_ids = [m.id for m in fine_msgs if m and getattr(m, 'id', None) and not getattr(m, 'empty', False)]
+        return max(fine_ids) if fine_ids else highest_probe
+    except Exception as e:
+        logger.debug(f"Max ID detection note: {e}")
+        return 150
+
+
+async def fetch_messages_by_ids(client: TelegramClient, entity, start_id: int, end_id: int) -> list:
+    """Fetches messages by ID chunks of 100 without invoking restricted history APIs."""
+    messages = []
+    chunk_size = 100
+    for chunk_start in range(start_id, end_id + 1, chunk_size):
+        chunk_ids = list(range(chunk_start, min(chunk_start + chunk_size, end_id + 1)))
+        try:
+            msgs = await client.get_messages(entity, ids=chunk_ids)
+            for m in msgs:
+                if m and getattr(m, 'id', None) and not getattr(m, 'empty', False):
+                    messages.append(m)
+        except Exception as e:
+            logger.debug(f"Chunk fetch notice: {e}")
+    return messages
+
+
 async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: int):
     """
     Scans a single chapter or section using either:
     1. msg_range: [start_id, end_id] (e.g. [100, 145])
     2. message_ids: [101, 102, 105, ...]
     3. topic_id: forum thread ID
+    All fetching is strictly ID-based to ensure 100% Telegram Bot API compatibility.
     """
     ch_name = chapter.get("name", "General")
     source_group = parse_chat_id(chapter.get("source_group"), default_chat_id)
@@ -183,28 +235,20 @@ async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: i
         if message_ids and isinstance(message_ids, list):
             # Fetch specific list of message IDs (channels.getMessages is allowed for bots)
             raw_msgs = await client.get_messages(source_entity, ids=message_ids)
-            messages_to_process = [m for m in raw_msgs if m]
+            messages_to_process = [m for m in raw_msgs if m and not getattr(m, 'empty', False)]
         elif msg_range and isinstance(msg_range, list) and len(msg_range) == 2:
             start_id = min(int(msg_range[0]), int(msg_range[1]))
             end_id = max(int(msg_range[0]), int(msg_range[1]))
-            # Fetch by ID chunks (avoids GetHistoryRequest bot restrictions completely)
-            for chunk_start in range(start_id, end_id + 1, 100):
-                chunk_ids = list(range(chunk_start, min(chunk_start + 100, end_id + 1)))
-                chunk_msgs = await client.get_messages(source_entity, ids=chunk_ids)
-                messages_to_process.extend([m for m in chunk_msgs if m])
-        elif topic_id:
-            # Querying replies in a topic uses GetRepliesRequest (allowed for bots)
-            kwargs = {"entity": source_entity, "reply_to": int(topic_id), "limit": 2000, "reverse": True}
-            async for m in client.iter_messages(**kwargs):
-                messages_to_process.append(m)
+            # Fetch by ID chunks (avoids GetHistoryRequest / GetRepliesRequest completely)
+            messages_to_process = await fetch_messages_by_ids(client, source_entity, start_id, end_id)
         else:
-            # Fallback to General topic (thread 1)
-            kwargs = {"entity": source_entity, "reply_to": 1, "limit": 2000, "reverse": True}
-            try:
-                async for m in client.iter_messages(**kwargs):
-                    messages_to_process.append(m)
-            except Exception as e:
-                logger.debug(f"General topic scan note: {e}")
+            # Auto-detect message ID range in group and fetch via bot-compliant ID requests
+            max_id = await detect_max_message_id(client, source_entity)
+            all_raw = await fetch_messages_by_ids(client, source_entity, 1, max_id)
+            if topic_id:
+                messages_to_process = [m for m in all_raw if is_in_topic(m, int(topic_id))]
+            else:
+                messages_to_process = all_raw
 
         for msg in messages_to_process:
             # 1. Detect subfolder text dividers if present
