@@ -65,7 +65,9 @@ class AdManager {
     }
 
     loadSocialBar(url) {
-        if (document.getElementById('adsterra-socialbar-script')) return;
+        if (document.getElementById('adsterra-socialbar-script') || document.querySelector(`script[src*="${url}"]`)) {
+            return;
+        }
         try {
             const script = document.createElement('script');
             script.id = 'adsterra-socialbar-script';
