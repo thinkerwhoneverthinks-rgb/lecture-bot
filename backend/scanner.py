@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import logging
 import asyncio
 import datetime
@@ -423,8 +424,7 @@ async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: i
                     "file_name": info["file_name"],
                     "file_size_mb": info["file_size_mb"],
                     "file_size_bytes": info["file_size_bytes"],
-                    "batch_index": ((sequence_in_section - 1) // 5) + 1,
-                    "batch_label": f"Batch {(((sequence_in_section - 1) // 5) * 5) + 1}-{(((sequence_in_section - 1) // 5) * 5) + 5}"
+                    "sequence_num": sequence_in_section
                 }
                 current_section["lectures"].append(lecture_item)
                 sequence_in_section += 1
@@ -436,14 +436,30 @@ async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: i
     if current_section["lectures"]:
         sections.append(current_section)
 
-    # Group into 5-lecture batches
+    # Group into dynamic batches: Target 5 parts, minimum 10 lectures per batch
     for s in sections:
+        sec_lectures = s["lectures"]
+        n_lecs = len(sec_lectures)
+        if n_lecs == 0:
+            s["batches"] = {}
+            continue
+
+        batch_size = max(10, math.ceil(n_lecs / 5)) if n_lecs > 10 else n_lecs
         batches = {}
-        for lec in s["lectures"]:
-            b_label = lec["batch_label"]
+
+        for idx, lec in enumerate(sec_lectures):
+            b_idx = (idx // batch_size) + 1
+            start_num = ((b_idx - 1) * batch_size) + 1
+            end_num = min(b_idx * batch_size, n_lecs)
+            b_label = f"Batch {start_num}-{end_num}"
+
+            lec["batch_index"] = b_idx
+            lec["batch_label"] = b_label
+
             if b_label not in batches:
                 batches[b_label] = []
             batches[b_label].append(lec)
+
         s["batches"] = batches
 
     return sections, total_lectures

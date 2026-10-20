@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import asyncio
 from aiohttp import web
 from telethon import TelegramClient, events, Button
@@ -100,10 +101,166 @@ async def api_get_user_data(request):
     return web.json_response(data, headers={"Access-Control-Allow-Origin": "*"})
 
 
+def parse_telegram_destination(raw_input: str):
+    """
+    Parses any Telegram link or identifier:
+    - https://t.me/wifu_free_leech_group/438727 -> ('@wifu_free_leech_group', None)
+    - https://t.me/bhyffiyg/2 -> ('@bhyffiyg', None)
+    - https://t.me/bhyffiyg/3/4 -> ('@bhyffiyg', 3)
+    - https://t.me/c/4437369298/7 -> (-1004437369298, None)
+    - https://t.me/c/4385985766/1/10 -> (-1004385985766, 1)
+    - @username -> ('@username', None)
+    - -100123456789 -> (-100123456789, None)
+    - Empty / None / 'pm' / 'me' -> (None, None)
+    """
+    if not raw_input:
+        return None, None
+    s = str(raw_input).strip()
+    if not s or s.lower() in ("none", "null", "pm", "me", "direct"):
+        return None, None
+
+    # Strip URL query parameters or hash if any (e.g. ?comment=123)
+    s = s.split("?")[0].split("#")[0].strip()
+
+    # Pattern 1: Private channel/group with topic: t.me/c/<channel_id>/<topic_id>/<msg_id>
+    m = re.search(r"t\.me\/c\/(\d+)\/(\d+)\/(\d+)", s)
+    if m:
+        channel_id = int(f"-100{m.group(1)}")
+        topic_id = int(m.group(2))
+        return channel_id, topic_id
+
+    # Pattern 2: Private channel/group message: t.me/c/<channel_id>/<msg_id>
+    m = re.search(r"t\.me\/c\/(\d+)\/(\d+)", s)
+    if m:
+        channel_id = int(f"-100{m.group(1)}")
+        return channel_id, None
+
+    # Pattern 3: Private channel base link: t.me/c/<channel_id>
+    m = re.search(r"t\.me\/c\/(\d+)", s)
+    if m:
+        channel_id = int(f"-100{m.group(1)}")
+        return channel_id, None
+
+    # Pattern 4: Public group with topic: t.me/<username>/<topic_id>/<msg_id>
+    m = re.search(r"t\.me\/([a-zA-Z0-9_]{4,})\/(\d+)\/(\d+)", s)
+    if m:
+        username = f"@{m.group(1)}"
+        topic_id = int(m.group(2))
+        return username, topic_id
+
+    # Pattern 5: Public channel/group message: t.me/<username>/<msg_id>
+    m = re.search(r"t\.me\/([a-zA-Z0-9_]{4,})\/(\d+)", s)
+    if m:
+        username = f"@{m.group(1)}"
+        return username, None
+
+    # Pattern 6: Public link base: t.me/<username>
+    m = re.search(r"t\.me\/([a-zA-Z0-9_]{4,})", s)
+    if m:
+        username = f"@{m.group(1)}"
+        return username, None
+
+    # Pattern 7: Raw numeric chat id (-100... or ...)
+    if s.startswith("-100") or s.lstrip("-").isdigit():
+        try:
+            return int(s), None
+        except ValueError:
+            return s, None
+
+    # Pattern 8: @username
+    if s.startswith("@"):
+        return s, None
+
+    return s, None
+
+
+async def api_verify_destination(request):
+    """
+    Diagnostic endpoint that tests whether:
+    1. The target chat exists and bot has access to it.
+    2. The bot is an Administrator in the target chat with message posting rights.
+    3. The topic (if specified) is valid.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"valid": False, "error": "Invalid request body"}, status=400)
+
+    user_id = body.get("user_id")
+    raw_input = body.get("destination_input")
+    manual_topic = body.get("topic_id")
+
+    # If empty, destination is PM
+    if not raw_input or str(raw_input).strip().lower() in ("", "none", "null", "pm", "me"):
+        return web.json_response({
+            "valid": True,
+            "is_pm": True,
+            "chat_title": "Bot Private Chat (PM)",
+            "chat_id": str(user_id) if user_id else "PM",
+            "topic_id": None,
+            "message": "✅ Destination: Your Private Chat with Bot (PM). No admin rights required!"
+        }, headers={"Access-Control-Allow-Origin": "*"})
+
+    parsed_chat, parsed_topic = parse_telegram_destination(raw_input)
+    final_chat = parsed_chat if parsed_chat is not None else raw_input
+    final_topic = parsed_topic
+    if manual_topic and str(manual_topic).strip().isdigit() and not final_topic:
+        final_topic = int(manual_topic)
+
+    if not main_client:
+        return web.json_response({"valid": False, "error": "Bot client not initialized"}, status=503)
+
+    try:
+        entity = await main_client.get_entity(final_chat)
+        chat_title = getattr(entity, 'title', None) or getattr(entity, 'username', None) or str(final_chat)
+
+        # Check bot permissions in target channel/group
+        try:
+            perms = await main_client.get_permissions(entity, 'me')
+            is_admin = getattr(perms, 'is_admin', False)
+            can_post = getattr(perms, 'post_messages', False) or getattr(perms, 'send_messages', False)
+        except Exception as pe:
+            logger.debug(f"Permissions probe note: {pe}")
+            is_admin = False
+            can_post = False
+
+        if not is_admin and not can_post:
+            return web.json_response({
+                "valid": False,
+                "chat_title": chat_title,
+                "chat_id": str(final_chat),
+                "topic_id": final_topic,
+                "error": f"⚠️ Bot is in '{chat_title}', but is NOT an Admin! Please promote the bot to Admin with 'Send Messages' rights."
+            }, headers={"Access-Control-Allow-Origin": "*"})
+
+        topic_note = f" (Topic ID: {final_topic})" if final_topic else ""
+        return web.json_response({
+            "valid": True,
+            "is_pm": False,
+            "chat_title": chat_title,
+            "chat_id": str(final_chat),
+            "topic_id": final_topic,
+            "is_admin": is_admin,
+            "message": f"✅ Verified! Bot is Admin in '{chat_title}'{topic_note}."
+        }, headers={"Access-Control-Allow-Origin": "*"})
+
+    except Exception as e:
+        err_msg = str(e)
+        if "Cannot find any entity" in err_msg or "Could not find the input entity" in err_msg:
+            return web.json_response({
+                "valid": False,
+                "error": "❌ Bot is not in this channel/group! Please add the bot as an Admin first."
+            }, headers={"Access-Control-Allow-Origin": "*"})
+        return web.json_response({
+            "valid": False,
+            "error": f"❌ Verification failed: {err_msg}"
+        }, headers={"Access-Control-Allow-Origin": "*"})
+
+
 async def api_save_settings(request):
     """
     Updates the user's destination group, topic ID, and optional custom bot token.
-    Enforces 1 channel per user limit.
+    Supports direct Telegram message links, chat IDs, or null for Bot PM delivery.
     """
     try:
         body = await request.json()
@@ -111,8 +268,8 @@ async def api_save_settings(request):
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
     user_id = body.get("user_id")
-    custom_group = body.get("custom_group")
-    custom_topic = body.get("custom_topic")
+    raw_group = body.get("custom_group")
+    raw_topic = body.get("custom_topic")
     custom_bot_token = body.get("custom_bot_token")
 
     if not user_id:
@@ -121,14 +278,27 @@ async def api_save_settings(request):
     user_id = int(user_id)
     data = await get_or_create_user_data(main_client, user_id)
 
-    # Clean destination group input (@channel, link, or integer chat id)
-    if custom_group:
-        custom_group = str(custom_group).strip()
-        if "t.me/" in custom_group:
-            custom_group = "@" + custom_group.split("t.me/")[-1].strip("/")
+    # Parse link if user provided a Telegram message link in custom_group
+    parsed_chat, parsed_topic = parse_telegram_destination(raw_group)
+    if parsed_chat is not None:
+        data["custom_group"] = str(parsed_chat)
+        if parsed_topic is not None:
+            data["custom_topic"] = parsed_topic
+        elif raw_topic and str(raw_topic).strip().isdigit():
+            data["custom_topic"] = int(raw_topic)
+        else:
+            data["custom_topic"] = None
+    else:
+        if raw_group and str(raw_group).strip().lower() not in ("none", "null", "pm", "me", ""):
+            data["custom_group"] = str(raw_group).strip()
+        else:
+            data["custom_group"] = None
 
-    data["custom_group"] = custom_group
-    data["custom_topic"] = custom_topic
+        if raw_topic and str(raw_topic).strip().isdigit():
+            data["custom_topic"] = int(raw_topic)
+        else:
+            data["custom_topic"] = None
+
     data["custom_bot_token"] = custom_bot_token
 
     saved = await save_user_data(main_client, user_id, data)
@@ -138,7 +308,7 @@ async def api_save_settings(request):
 async def api_queue_one(request):
     """
     Enqueues a single lecture forward task from Master Forum to User's Destination Group.
-    Called optimistically by frontend while UI displays fake upload.
+    If no destination is configured, gracefully defaults to the user's Bot PM chat.
     """
     try:
         body = await request.json()
@@ -169,10 +339,9 @@ async def api_queue_one(request):
     dest_chat = u_data.get("custom_group")
     dest_topic = u_data.get("custom_topic")
 
-    if not dest_chat:
-        return web.json_response({
-            "error": "No destination group set! Please configure your group in Settings first."
-        }, status=400, headers={"Access-Control-Allow-Origin": "*"})
+    # If no destination group set, default directly to user's PM
+    if not dest_chat or str(dest_chat).lower() in ("none", "null", "pm", "me", ""):
+        dest_chat = user_id
 
     from_chat = body.get("from_chat") or FORUM_CHAT_ID
     if isinstance(from_chat, str) and (from_chat.startswith("-100") or from_chat.lstrip("-").isdigit()):
@@ -574,6 +743,7 @@ async def create_app():
     app.router.add_get("/api/lectures", api_get_lectures)
     app.router.add_get("/api/user_data", api_get_user_data)
     app.router.add_post("/api/save_settings", api_save_settings)
+    app.router.add_post("/api/verify_destination", api_verify_destination)
     app.router.add_post("/api/queue_one", api_queue_one)
     app.router.add_post("/api/complete_batch", api_complete_batch)
     app.router.add_get("/api/queue_status", api_queue_status)

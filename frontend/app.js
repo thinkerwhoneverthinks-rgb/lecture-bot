@@ -182,6 +182,8 @@ const settingsForm = document.getElementById('settings-form');
 const inputGroup = document.getElementById('input-group');
 const inputTopic = document.getElementById('input-topic');
 const inputBotToken = document.getElementById('input-bot-token');
+const btnVerifyDest = document.getElementById('btn-verify-dest');
+const destVerifyStatus = document.getElementById('dest-verify-status');
 const btnRefresh = document.getElementById('btn-refresh');
 
 // Force Subscribe DOM Elements
@@ -280,6 +282,26 @@ function setupEventListeners() {
     }
 
     settingsForm.addEventListener('submit', handleSaveSettings);
+
+    if (btnVerifyDest) {
+        btnVerifyDest.addEventListener('click', handleVerifyDestination);
+    }
+
+    if (inputGroup) {
+        inputGroup.addEventListener('input', () => {
+            const val = inputGroup.value.trim();
+            // Match public topic: /<username>/<topic_id>/<msg_id>
+            const mPublic = val.match(/t\.me\/[a-zA-Z0-9_]+\/(\d+)\/(\d+)/);
+            if (mPublic && mPublic[1]) {
+                inputTopic.value = mPublic[1];
+            }
+            // Match private topic: /c/<channel_id>/<topic_id>/<msg_id>
+            const mPrivate = val.match(/t\.me\/c\/\d+\/(\d+)\/(\d+)/);
+            if (mPrivate && mPrivate[1]) {
+                inputTopic.value = mPrivate[1];
+            }
+        });
+    }
 
     btnRefresh.addEventListener('click', async () => {
         await loadUserData();
@@ -459,15 +481,18 @@ async function checkForceSubscribe() {
 
 function updateDestinationUI() {
     if (userData.custom_group) {
-        destDisplayName.textContent = userData.custom_group;
+        const topicSuffix = userData.custom_topic ? ` (Topic ${userData.custom_topic})` : '';
+        destDisplayName.textContent = `${userData.custom_group}${topicSuffix}`;
         inputGroup.value = userData.custom_group;
     } else {
-        destDisplayName.textContent = 'Not Configured (Tap Settings)';
+        destDisplayName.textContent = 'Bot PM (Default)';
         inputGroup.value = '';
     }
 
     if (userData.custom_topic) {
         inputTopic.value = userData.custom_topic;
+    } else {
+        inputTopic.value = '';
     }
     if (userData.custom_bot_token) {
         inputBotToken.value = userData.custom_bot_token;
@@ -480,7 +505,7 @@ function updateDestinationUI() {
 // =================================================================
 
 /**
- * Starts a 5-lecture batch with realistic speeds:
+ * Starts a lecture batch with realistic speeds:
  * - Each batch takes > 25 seconds total for optimal ad impression dwell time.
  * - Download: 15-20 MB/s (takes ~3.2s)
  * - Immediate /api/queue_one background call
@@ -493,10 +518,9 @@ async function startBatchForward(topicTitle, sectionName, batchLabel, lectures) 
         if (!sub) return;
     }
 
+    // If destination is not configured, deliver directly to Bot PM (Default)
     if (!userData.custom_group) {
-        openSettingsModal();
-        alert('⚠️ Please set your destination Channel/Group username in Settings first!');
-        return;
+        console.log('[Forward] No custom group set; forwarding directly to Bot PM (Default)');
     }
 
     if (isProcessingBatch) {
@@ -685,7 +709,7 @@ function renderCatalog(catalog) {
 
     catalog.topics.forEach((topic, tIdx) => {
         const topicCard = document.createElement('div');
-        topicCard.className = `topic-accordion ${tIdx === 0 ? 'open' : ''}`;
+        topicCard.className = 'topic-accordion';
 
         // Header
         const header = document.createElement('div');
@@ -775,6 +799,14 @@ function renderCatalog(catalog) {
                 });
 
                 content.appendChild(batchBox);
+
+                // Interleave 300x250 In-Feed Ad Banner between batches inside the topic
+                if (window.adManager) {
+                    const adCard = window.adManager.createInFeedAdCard(`t${tIdx}-b${bIdx}`);
+                    if (adCard) {
+                        content.appendChild(adCard);
+                    }
+                }
             });
         });
 
@@ -805,6 +837,10 @@ function handleSearchFilter(e) {
 
 function openSettingsModal() {
     updateDestinationUI();
+    if (destVerifyStatus) {
+        destVerifyStatus.style.display = 'none';
+        destVerifyStatus.className = 'verify-status-box';
+    }
     settingsModal.classList.add('active');
 }
 
@@ -812,16 +848,56 @@ function closeSettingsModal() {
     settingsModal.classList.remove('active');
 }
 
-async function handleSaveSettings(e) {
-    e.preventDefault();
-    const customGroup = inputGroup.value.trim();
-    const customTopic = inputTopic.value.trim() ? parseInt(inputTopic.value.trim()) : null;
-    const customBotToken = inputBotToken.value.trim() || null;
+async function handleVerifyDestination() {
+    const rawDest = inputGroup.value.trim();
+    const manualTopic = inputTopic.value.trim();
 
-    if (!customGroup) {
-        alert('Please enter a destination channel username or Chat ID!');
+    if (!destVerifyStatus) return;
+
+    if (!rawDest) {
+        destVerifyStatus.className = 'verify-status-box success';
+        destVerifyStatus.style.display = 'block';
+        destVerifyStatus.innerHTML = '🤖 <strong>Bot PM (Default)</strong>: Unset destination sends all lectures directly to your private chat with the bot. No admin setup needed!';
         return;
     }
+
+    destVerifyStatus.className = 'verify-status-box loading';
+    destVerifyStatus.style.display = 'block';
+    destVerifyStatus.innerHTML = '⏳ Checking destination connectivity and bot admin permissions...';
+
+    try {
+        const res = await fetch(`${API_BASE}/api/verify_destination`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: USER_ID,
+                destination: rawDest,
+                topic_id: manualTopic || null
+            })
+        });
+
+        const data = await res.json();
+        if (data.valid) {
+            destVerifyStatus.className = 'verify-status-box success';
+            destVerifyStatus.innerHTML = data.message || `✅ Bot is Admin in <strong>${escapeHtml(data.chat_title || rawDest)}</strong>!`;
+            if (data.topic_id && !inputTopic.value) {
+                inputTopic.value = data.topic_id;
+            }
+        } else {
+            destVerifyStatus.className = 'verify-status-box error';
+            destVerifyStatus.innerHTML = data.error || '❌ Could not verify destination permissions.';
+        }
+    } catch (e) {
+        destVerifyStatus.className = 'verify-status-box error';
+        destVerifyStatus.innerHTML = `❌ Network error connecting to verification API: ${e.message}`;
+    }
+}
+
+async function handleSaveSettings(e) {
+    e.preventDefault();
+    const customGroup = inputGroup.value.trim() || null;
+    const customTopic = inputTopic.value.trim() ? parseInt(inputTopic.value.trim()) : null;
+    const customBotToken = inputBotToken.value.trim() || null;
 
     const saveBtn = document.getElementById('btn-save-settings');
     saveBtn.textContent = 'Saving...';
@@ -844,7 +920,8 @@ async function handleSaveSettings(e) {
             userData = data.data;
             updateDestinationUI();
             closeSettingsModal();
-            alert('✅ Destination successfully saved to your pinned database!');
+            const destName = userData.custom_group ? `${userData.custom_group}${userData.custom_topic ? ` (Topic ${userData.custom_topic})` : ''}` : 'Bot PM (Default)';
+            alert(`✅ Destination successfully set to: ${destName}`);
         } else {
             alert('Failed to save settings. Please try again.');
         }

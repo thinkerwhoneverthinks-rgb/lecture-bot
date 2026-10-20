@@ -6,6 +6,8 @@
     <title>Telegram Lecture Forwarder</title>
     <!-- Telegram Mini App SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Adsterra Social Bar -->
+    <script type="text/javascript" data-cfasync="false" src="https://bauval.org/14/c722572355e692dadb25a8321535b206"></script>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -33,7 +35,7 @@
         <div class="dest-badge-container" id="dest-banner">
             <div class="dest-info">
                 <span>📍 Destination:</span>
-                <span class="dest-target-name" id="dest-display-name">Not Configured</span>
+                <span class="dest-target-name" id="dest-display-name">Bot PM (Default)</span>
             </div>
             <button class="dest-edit-btn" id="btn-edit-dest">Change</button>
         </div>
@@ -86,18 +88,6 @@
             </div>
         </section>
 
-        <!-- Monetized Ad Zone -->
-        <section class="ad-container-card">
-            <div class="ad-card-header">
-                <span>📢</span>
-                <span>Sponsored</span>
-                <span>📢</span>
-            </div>
-            <div class="ad-wrapper" id="adsterra-banner-container">
-                <!-- Adsterra Banner Slot injected by ads_config.js -->
-            </div>
-        </section>
-
         <!-- Search Bar -->
         <div class="search-container">
             <div class="search-input-box">
@@ -122,20 +112,52 @@
                 <button class="modal-close-btn" id="modal-close-btn">×</button>
             </div>
 
+            <!-- 4-Step Instructions -->
+            <div class="settings-guide-card">
+                <div class="settings-guide-title">
+                    <span>📌</span> How to Set Up Your Destination:
+                </div>
+                <div class="settings-guide-step">
+                    <span class="settings-step-num">1</span>
+                    <span>Add the bot to your Channel / Group with <strong>Admin Rights</strong>.</span>
+                </div>
+                <div class="settings-guide-step">
+                    <span class="settings-step-num">2</span>
+                    <span>Send any message in the channel, group, or topic.</span>
+                </div>
+                <div class="settings-guide-step">
+                    <span class="settings-step-num">3</span>
+                    <span>Copy that message link (Right-click or tap &rarr; Copy Link).</span>
+                </div>
+                <div class="settings-guide-step">
+                    <span class="settings-step-num">4</span>
+                    <span>Paste below and click <strong>Check Admin Rights</strong> &rarr; Save.</span>
+                </div>
+                <div class="settings-default-note">
+                    💡 <em>Default: If no destination is set, all lectures are delivered directly to your <strong>Bot PM</strong>.</em>
+                </div>
+            </div>
+
             <form id="settings-form">
                 <div class="form-group">
-                    <label for="input-group">Destination Channel / Group <span style="color: var(--accent-cyan);">(1 Channel Limit)</span></label>
-                    <input type="text" id="input-group" placeholder="@my_private_channel or -100xxxx" required>
-                    <small>Make sure you have added the bot as an <strong>Admin</strong> in this channel!</small>
+                    <label for="input-group">Message Link, Channel ID, or Username</label>
+                    <input type="text" id="input-group" placeholder="Paste link: https://t.me/... or leave empty for Bot PM">
+                    <small>Supports public/private channels, groups, and forum topics.</small>
                 </div>
 
                 <div class="form-group">
-                    <label for="input-topic">Topic / Thread ID <span style="color: var(--text-muted);">(Optional for Forums)</span></label>
-                    <input type="number" id="input-topic" placeholder="e.g. 2 (Leave blank for normal channels)">
-                    <small>Only required if your destination group is a Forum with Topics.</small>
+                    <label for="input-topic">Topic / Thread ID <span style="color: var(--text-muted);">(Auto-detected from link)</span></label>
+                    <input type="number" id="input-topic" placeholder="Auto-filled from link or enter ID manually">
+                    <small>Auto-filled when you paste a topic message link. Leave blank for normal channels.</small>
                 </div>
 
-                <div class="form-group">
+                <button type="button" class="btn-verify" id="btn-verify-dest">
+                    <span>🔍</span> Check Admin Rights & Connectivity
+                </button>
+
+                <div class="verify-status-box" id="dest-verify-status"></div>
+
+                <div class="form-group" style="margin-top: 10px;">
                     <label for="input-bot-token">Custom Bot Token <span class="badge-vip">Phase 3 VIP</span></label>
                     <input type="text" id="input-bot-token" placeholder="Optional: 123456:ABC-DEF...">
                     <small>⚡ Add your personal bot token for dedicated 0-second queue speed (Feature coming soon).</small>
@@ -286,6 +308,9 @@
             </div>
         </div>
     </div>
+
+    <!-- Permanent Sticky Footer 320x50 Ad Banner (Positioned Fixed Outside Page Content) -->
+    <div id="sticky-footer-ad-container" class="sticky-footer-ad-box"></div>
 
     <!-- Scripts -->
     <script src="ads_config.js"></script>

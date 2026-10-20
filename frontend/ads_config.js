@@ -7,16 +7,25 @@ const ADS_CONFIG = {
     // Master switch to enable/disable ads across the Mini App
     enabled: true,
 
-    // Adsterra 300x250 Banner settings
-    banner_300x250: {
+    // Adsterra Sticky Footer 320x50 Banner (permanent outside the content)
+    sticky_footer_320x50: {
+        enabled: true,
+        key: "47e4164fcf0e625d122335dd71c6e9f8",
+        script_url: "https://bauval.org/22/47e4164fcf0e625d122335dd71c6e9f8",
+        container_id: "sticky-footer-ad-container",
+        width: 320,
+        height: 50,
+        refresh_interval_sec: 45
+    },
+
+    // Adsterra 300x250 In-Feed Banners (interleaved between batch cards)
+    infeed_300x250: {
         enabled: true,
         key: "71582c8c44b686f2f87262a395bfd6e5",
         script_url: "https://bauval.org/22/71582c8c44b686f2f87262a395bfd6e5",
-        container_id: "adsterra-banner-container",
         width: 300,
         height: 250,
-        // Auto-refresh interval in seconds during batch processing to register new impressions
-        refresh_interval_sec: 30
+        refresh_interval_sec: 35
     },
 
     // Adsterra Social Bar (In-page push notification widget - High CPM)
@@ -33,19 +42,23 @@ class AdManager {
     constructor(config) {
         this.config = config;
         this.refreshTimer = null;
-        this.adViewCount = 0;
+        this.infeedSlots = [];
+        this.totalRefreshes = 0;
     }
 
     init() {
         if (!this.config.enabled) return;
 
-        // 1. Inject Social Bar Script into page head
+        // 1. Inject Social Bar Script if not already loaded in head
         if (this.config.social_bar?.enabled && this.config.social_bar?.script_url) {
             this.loadSocialBar(this.config.social_bar.script_url);
         }
 
-        // 2. Initial 300x250 Banner Render
-        this.renderBanner();
+        // 2. Render Sticky Footer 320x50 Banner
+        this.renderStickyFooter();
+
+        // 3. Start auto-rotation timer (every 35s safe interval)
+        this.startAutoRefreshCycle();
     }
 
     loadSocialBar(url) {
@@ -63,32 +76,9 @@ class AdManager {
         }
     }
 
-    renderBanner() {
-        if (!this.config.enabled || !this.config.banner_300x250?.enabled) return;
-
-        const container = document.getElementById(this.config.banner_300x250.container_id);
-        if (!container) return;
-
-        const key = this.config.banner_300x250.key;
-        const scriptUrl = this.config.banner_300x250.script_url;
-        const width = this.config.banner_300x250.width || 300;
-        const height = this.config.banner_300x250.height || 250;
-
-        // Clear existing ad container content safely
-        container.innerHTML = '';
-
-        // Render via an isolated iframe to prevent script interference and allow clean refreshing
-        const iframe = document.createElement('iframe');
-        iframe.width = width;
-        iframe.height = height;
-        iframe.frameBorder = '0';
-        iframe.scrolling = 'no';
-        iframe.style.border = 'none';
-        iframe.style.overflow = 'hidden';
-        iframe.style.borderRadius = '8px';
-        iframe.style.maxWidth = '100%';
-
-        const iframeHtml = `
+    buildIframeDoc(key, scriptUrl, width, height) {
+        const cacheBuster = Date.now();
+        return `
             <!DOCTYPE html>
             <html>
             <head>
@@ -114,41 +104,122 @@ class AdManager {
                         'format' : 'iframe',
                         'height' : ${height},
                         'width' : ${width},
-                        'params' : {}
+                        'params' : { 'cb': '${cacheBuster}' }
                     };
                 </script>
                 <script type="text/javascript" src="${scriptUrl}"></script>
             </body>
             </html>
         `;
+    }
 
-        iframe.srcdoc = iframeHtml;
+    renderStickyFooter() {
+        if (!this.config.enabled || !this.config.sticky_footer_320x50?.enabled) return;
+
+        const container = document.getElementById(this.config.sticky_footer_320x50.container_id);
+        if (!container) return;
+
+        const { key, script_url, width, height } = this.config.sticky_footer_320x50;
+
+        container.innerHTML = '';
+        const iframe = document.createElement('iframe');
+        iframe.width = width;
+        iframe.height = height;
+        iframe.frameBorder = '0';
+        iframe.scrolling = 'no';
+        iframe.style.border = 'none';
+        iframe.style.overflow = 'hidden';
+        iframe.style.maxWidth = '100%';
+        iframe.srcdoc = this.buildIframeDoc(key, script_url, width, height);
+
         container.appendChild(iframe);
-
-        this.adViewCount++;
-        console.log(`[AdManager] Rendered 300x250 banner view #${this.adViewCount}`);
+        console.log('[AdManager] Rendered Sticky Footer 320x50 Banner');
     }
 
-    startBatchRefreshCycle() {
-        if (!this.config.enabled || !this.config.banner_300x250?.enabled) return;
-        this.stopBatchRefreshCycle();
+    createInFeedAdCard(slotId) {
+        if (!this.config.enabled || !this.config.infeed_300x250?.enabled) return null;
 
-        // Refresh banner on batch start to capture student impression
-        this.renderBanner();
+        const { key, script_url, width, height } = this.config.infeed_300x250;
 
-        // Cycle ad banner periodically while student waits for batch upload
-        const intervalMs = (this.config.banner_300x250.refresh_interval_sec || 30) * 1000;
+        const card = document.createElement('div');
+        card.className = 'infeed-ad-card';
+        card.id = `ad-slot-${slotId}`;
+
+        const label = document.createElement('div');
+        label.className = 'infeed-ad-label';
+        label.innerHTML = '<span>📢</span><span>Sponsored</span><span>📢</span>';
+        card.appendChild(label);
+
+        const iframe = document.createElement('iframe');
+        iframe.className = 'infeed-ad-iframe';
+        iframe.width = width;
+        iframe.height = height;
+        iframe.frameBorder = '0';
+        iframe.scrolling = 'no';
+        iframe.style.border = 'none';
+        iframe.style.overflow = 'hidden';
+        iframe.style.borderRadius = '8px';
+        iframe.style.maxWidth = '100%';
+        iframe.srcdoc = this.buildIframeDoc(key, script_url, width, height);
+
+        card.appendChild(iframe);
+
+        // Register for auto-refresh
+        this.infeedSlots.push({ id: slotId, iframe: iframe });
+
+        return card;
+    }
+
+    startAutoRefreshCycle() {
+        this.stopAutoRefreshCycle();
+
+        const intervalSec = this.config.infeed_300x250.refresh_interval_sec || 35;
         this.refreshTimer = setInterval(() => {
-            console.log('[AdManager] Refreshing banner impression cycle...');
-            this.renderBanner();
-        }, intervalMs);
+            this.cycleVisibleBanners();
+        }, intervalSec * 1000);
     }
 
-    stopBatchRefreshCycle() {
+    stopAutoRefreshCycle() {
         if (this.refreshTimer) {
             clearInterval(this.refreshTimer);
             this.refreshTimer = null;
         }
+    }
+
+    cycleVisibleBanners() {
+        if (!this.config.enabled) return;
+
+        // Clean up disconnected iframes
+        this.infeedSlots = this.infeedSlots.filter(s => s.iframe && document.body.contains(s.iframe));
+
+        // Refresh visible in-feed ads (inside open accordions)
+        const { key, script_url, width, height } = this.config.infeed_300x250;
+        let refreshedCount = 0;
+
+        this.infeedSlots.forEach(s => {
+            // Check if element is visible on screen
+            if (s.iframe.offsetParent !== null) {
+                s.iframe.srcdoc = this.buildIframeDoc(key, script_url, width, height);
+                refreshedCount++;
+            }
+        });
+
+        // Also refresh the sticky footer banner
+        this.renderStickyFooter();
+
+        this.totalRefreshes++;
+        if (refreshedCount > 0) {
+            console.log(`[AdManager] Refreshed ${refreshedCount} visible in-feed banner(s) (Cycle #${this.totalRefreshes})`);
+        }
+    }
+
+    startBatchRefreshCycle() {
+        // Immediate cycle when user starts forwarding a batch
+        this.cycleVisibleBanners();
+    }
+
+    stopBatchRefreshCycle() {
+        // Keeps standard background auto-refresh running
     }
 }
 

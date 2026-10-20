@@ -50,10 +50,14 @@ def record_chat_message_sent(dest_chat: str):
     CHAT_HISTORY[dest_chat].append(time.time())
 
 
-async def add_forward_job(user_id: int, dest_chat: str, dest_topic, from_chat: int, message_id: int, lecture_id: str, title: str):
+async def add_forward_job(user_id: int, dest_chat, dest_topic, from_chat: int, message_id: int, lecture_id: str, title: str):
     """
     Enqueues a lecture forward job from the master forum group to the user's destination.
+    If dest_chat is not set, defaults to user's private chat (PM) with the bot.
     """
+    if not dest_chat or str(dest_chat).lower() in ("none", "null", "pm", "me", ""):
+        dest_chat = user_id
+
     job = {
         "user_id": user_id,
         "dest_chat": dest_chat,
@@ -70,88 +74,103 @@ async def add_forward_job(user_id: int, dest_chat: str, dest_topic, from_chat: i
     return job
 
 
-async def start_queue_workers(clients: list):
-    """
-    Spawns background dispatcher that processes jobs with 0.05s delay,
-    round-robin rotates across worker bot tokens, and gracefully handles 429 FloodWait.
-    """
-    global CLIENT_POOL, current_worker_index
-    CLIENT_POOL = clients
-
-    if not CLIENT_POOL:
-        logger.error("No Telegram clients available in pool for queue worker!")
-        return
-
-    logger.info(f"🚀 Queue worker started with {len(CLIENT_POOL)} bot client(s) in pool.")
-
-    while True:
-        try:
-            job = await JOB_QUEUE.get()
-
-            # Check per-chat rate limiting to avoid 429 FloodWait on same chat
-            dest_chat = str(job["dest_chat"])
-            if is_chat_rate_limited(dest_chat):
-                logger.warning(f"⏳ Chat {dest_chat} hit 20 msg/min threshold. Delaying job for 3s...")
-                await asyncio.sleep(3.0)
-                await JOB_QUEUE.put(job)
-                JOB_QUEUE.task_done()
-                continue
-
-            # Pick next client via Round-Robin
-            client = CLIENT_POOL[current_worker_index % len(CLIENT_POOL)]
-            current_worker_index += 1
-
-            # Dispatch forward
-            success = await process_job(client, job)
-            if not success and job["retries"] < 3:
-                job["retries"] += 1
-                logger.info(f"🔁 Re-queuing job '{job['title']}' (retry {job['retries']}/3)")
-                await JOB_QUEUE.put(job)
-
-            JOB_QUEUE.task_done()
-            # 50ms delay between dispatches
-            await asyncio.sleep(QUEUE_DISPATCH_INTERVAL)
-
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Unexpected error in queue worker: {e}", exc_info=True)
-            await asyncio.sleep(1.0)
-
-
 async def process_job(client: TelegramClient, job: dict) -> bool:
-    """Executes forwarding of one lecture to the user's destination chat."""
+    """
+    Executes delivery of one lecture to the user's destination chat.
+    Sends cleanly without 'Forwarded from' header whenever possible.
+    Safely handles topic IDs (omits reply_to for Topic 1/General to prevent Telegram RPC errors).
+    """
     user_id = job["user_id"]
     dest_chat = job["dest_chat"]
-    dest_topic = job["dest_topic"]
+    dest_topic_raw = job.get("dest_topic")
     from_chat = job["from_chat"]
     message_id = job["message_id"]
     lecture_id = job["lecture_id"]
     title = job["title"]
+
     try:
-        # Resolve destination
+        # 1. Resolve destination chat (defaults to user PM if unset)
         target_chat = dest_chat
-        if isinstance(dest_chat, str) and (dest_chat.startswith("-100") or dest_chat.lstrip("-").isdigit()):
-            target_chat = int(dest_chat)
+        if not target_chat or str(target_chat).lower() in ("none", "null", "pm", "me", ""):
+            target_chat = user_id
+        elif isinstance(target_chat, str) and (target_chat.startswith("-100") or target_chat.lstrip("-").isdigit()):
+            target_chat = int(target_chat)
+
         dest_entity = await client.get_entity(target_chat)
 
         source_peer = from_chat
         if isinstance(from_chat, str) and (from_chat.startswith("-100") or from_chat.lstrip("-").isdigit()):
             source_peer = int(from_chat)
 
-        # Forward or Copy message
-        forward_kwargs = {
-            "entity": dest_entity,
-            "messages": message_id,
-            "from_peer": source_peer
-        }
-        if dest_topic:
-            forward_kwargs["reply_to"] = int(dest_topic)
+        # 2. Normalize destination topic (Topic 1 is General thread, requires no reply_to)
+        topic_reply = None
+        if dest_topic_raw and str(dest_topic_raw).lower() not in ("none", "null", ""):
+            try:
+                t_int = int(dest_topic_raw)
+                if t_int > 1:
+                    topic_reply = t_int
+            except (ValueError, TypeError):
+                topic_reply = None
 
-        await client.forward_messages(**forward_kwargs)
+        # 3. Fetch original message to send clean copy without 'Forwarded from' tag
+        delivered = False
+        try:
+            source_msg = await client.get_messages(source_peer, ids=message_id)
+            if source_msg and source_msg.media:
+                send_kwargs = {
+                    "caption": source_msg.message or "",
+                    "formatting_entities": getattr(source_msg, "entities", None)
+                }
+                if topic_reply:
+                    send_kwargs["reply_to"] = topic_reply
+
+                try:
+                    await client.send_file(dest_entity, source_msg.media, **send_kwargs)
+                    delivered = True
+                except Exception as file_err:
+                    # If failed with topic error, retry without topic into general/root
+                    if topic_reply and ("TOPIC" in str(file_err).upper() or "REPLY" in str(file_err).upper()):
+                        logger.warning(f"Topic reply {topic_reply} failed ({file_err}). Retrying into group root...")
+                        send_kwargs.pop("reply_to", None)
+                        await client.send_file(dest_entity, source_msg.media, **send_kwargs)
+                        delivered = True
+                    else:
+                        raise file_err
+
+            elif source_msg and source_msg.message:
+                send_kwargs = {
+                    "message": source_msg.message,
+                    "formatting_entities": getattr(source_msg, "entities", None)
+                }
+                if topic_reply:
+                    send_kwargs["reply_to"] = topic_reply
+                await client.send_message(dest_entity, **send_kwargs)
+                delivered = True
+
+        except Exception as copy_err:
+            logger.debug(f"Direct send_file copy notice: {copy_err}. Attempting forward_messages fallback...")
+
+        # 4. Fallback to forward_messages if send_file could not be used
+        if not delivered:
+            fwd_kwargs = {
+                "entity": dest_entity,
+                "messages": message_id,
+                "from_peer": source_peer
+            }
+            if topic_reply:
+                fwd_kwargs["reply_to"] = topic_reply
+
+            try:
+                # Attempt forward with drop_author=True to strip forward tag
+                await client.forward_messages(drop_author=True, **fwd_kwargs)
+            except Exception:
+                # Standard forward fallback
+                if "drop_author" in fwd_kwargs:
+                    fwd_kwargs.pop("drop_author", None)
+                await client.forward_messages(**fwd_kwargs)
+
         record_chat_message_sent(str(dest_chat))
-
-        logger.info(f"✅ Delivered: '{title}' -> {dest_chat}")
+        logger.info(f"✅ Delivered: '{title}' -> {dest_chat} (Topic: {topic_reply or 'None/General'})")
 
         # Update user's sent_lectures in pinned DB
         u_data = await get_or_create_user_data(client, user_id)
