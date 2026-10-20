@@ -283,7 +283,7 @@ def setup_bot_handlers(client: TelegramClient):
         # Open natively as a Telegram Mini App (inside Telegram instead of Chrome)
         try:
             from telethon import types
-            web_button = types.KeyboardButtonWebView(text="🚀 Open Lecture Dashboard", url=WEBAPP_URL)
+            web_button = types.KeyboardButtonSimpleWebView(text="🚀 Open Lecture Dashboard", url=WEBAPP_URL)
             markup = types.ReplyInlineMarkup(rows=[types.KeyboardButtonRow(buttons=[web_button])])
             await event.respond(welcome_text, buttons=markup)
         except Exception as e:
@@ -435,6 +435,19 @@ async def init_telegram_clients():
 
     # Start Queue Dispatcher background task
     asyncio.create_task(start_queue_workers(all_clients))
+
+    # Configure Telegram persistent Mini App Menu button
+    if WEBAPP_URL:
+        try:
+            from telethon.tl.functions.bots import SetBotMenuButtonRequest
+            from telethon import types
+            await main_client(SetBotMenuButtonRequest(
+                user_id=types.InputUserEmpty(),
+                button=types.BotMenuButton(text="🚀 Lectures", url=WEBAPP_URL)
+            ))
+            logger.info("📱 Configured Telegram persistent Mini App Menu button.")
+        except Exception as e:
+            logger.debug(f"Menu button note: {e}")
 
 
 async def create_app():
