@@ -1002,12 +1002,52 @@ async function handleVerifyDestination() {
         if (data.valid) {
             destVerifyStatus.className = 'verify-status-box success';
             if (data.is_pm) {
-                destVerifyStatus.innerHTML = '🤖 <strong>Bot PM (Default)</strong>: All lectures will be delivered directly to your private chat with the bot. No admin setup needed!';
+                destVerifyStatus.innerHTML = '🤖 <strong>Bot PM (Default)</strong>: All lectures will be delivered directly to your private chat with the bot.';
+                userData.custom_group = null;
+                userData.custom_topic = null;
+                userData.custom_group_title = null;
             } else {
-                destVerifyStatus.innerHTML = data.message || `✅ Bot is Admin in <strong>${escapeHtml(data.chat_title || rawDest)}</strong>!`;
+                destVerifyStatus.innerHTML = data.message || `✅ <strong>Verified & Saved!</strong> Forwarding set to <strong>${escapeHtml(data.chat_title || rawDest)}</strong>${data.topic_id ? ` (Topic ${data.topic_id})` : ''}!`;
+                userData.custom_group = data.chat_id || rawDest;
+                userData.custom_topic = data.topic_id || (manualTopic ? parseInt(manualTopic) : null);
+                userData.custom_group_title = data.chat_title || null;
             }
-            if (data.topic_id && !inputTopic.value) {
+
+            if (data.user_data) {
+                userData = data.user_data;
+            }
+
+            if (data.topic_id) {
                 inputTopic.value = data.topic_id;
+            }
+
+            // Immediately refresh the dashboard destination banner
+            updateDestinationUI();
+
+            // Background persist via save_settings endpoint to guarantee sync
+            try {
+                const saveRes = await fetch(`${API_BASE}/api/save_settings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        custom_group: userData.custom_group,
+                        destination: userData.custom_group,
+                        destination_input: rawDest,
+                        custom_topic: userData.custom_topic,
+                        topic_id: userData.custom_topic,
+                        custom_bot_token: inputBotToken.value.trim() || null
+                    })
+                });
+                if (saveRes.ok) {
+                    const saveJson = await saveRes.json();
+                    if (saveJson.data) {
+                        userData = saveJson.data;
+                        updateDestinationUI();
+                    }
+                }
+            } catch (err) {
+                console.warn('Auto-save error:', err);
             }
         } else {
             destVerifyStatus.className = 'verify-status-box error';

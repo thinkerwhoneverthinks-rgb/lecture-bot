@@ -163,73 +163,70 @@ async def backup_to_channel(client: TelegramClient, user_id: int, data: dict):
 
 async def get_or_create_user_data(client: TelegramClient, user_id: int) -> dict:
     """
-    Retrieves user data:
-    1. Checks user DM for pinned database message.
-    2. If missing or deleted, searches private backup channel to restore.
-    3. Recreates pinned message with recovered data + warning.
-    4. If first-time user, initializes default database message and pins it.
+    Retrieves user data cleanly without spamming the user's private DM:
+    1. Checks fast in-memory session cache.
+    2. Checks persistent disk store (user_data_store.json).
+    3. Migrates legacy pinned DM message if one exists, then removes the spam message from DM.
+    4. Initializes default profile safely.
     """
     register_user(user_id)
     if user_id in USER_CACHE:
         return USER_CACHE[user_id]
 
-    msg, data = await find_pinned_data_message(client, user_id)
+    local_data = load_from_local_store(user_id)
+    if local_data:
+        USER_CACHE[user_id] = local_data
+        return local_data
 
-    if data:
-        USER_CACHE[user_id] = data
-        return data
+    # Check for legacy pinned message to migrate data from
+    if client:
+        try:
+            msg, legacy_data = await find_pinned_data_message(client, user_id)
+            if legacy_data:
+                USER_CACHE[user_id] = legacy_data
+                save_to_local_store(user_id, legacy_data)
+                logger.info(f"Migrated legacy pinned user data for {user_id} to local disk store.")
+                # Clean up the legacy raw JSON message from DM to stop spam
+                try:
+                    await client.delete_messages(user_id, [msg.id])
+                except Exception:
+                    pass
+                return legacy_data
+        except Exception as e:
+            logger.debug(f"Legacy message check note for user {user_id}: {e}")
 
-    # Pinned message missing or deleted: Try to restore from backup channel
-    recovered_data = await search_backup_channel(client, user_id)
-    warning_text = ""
+    # Brand new user initialization
+    data = dict(DEFAULT_USER_DATA)
+    USER_CACHE[user_id] = data
+    save_to_local_store(user_id, data)
+    logger.info(f"✨ Initialized clean persistent user storage for user {user_id}.")
 
-    if recovered_data:
-        data = recovered_data
-        warning_text = "⚠️ Aapne apna personal data message delete kar diya tha! Humne backup se wapas recover karke pin kar diya hai.\n\n"
-        logger.info(f"🔄 Recovered deleted user data for user {user_id} from backup channel.")
-    else:
-        # Brand new user
-        data = dict(DEFAULT_USER_DATA)
-        logger.info(f"✨ Initializing brand new user storage for user {user_id}.")
-
-    # Send and pin the data message in DM
-    try:
-        body = f"{warning_text}{PINNED_DB_WARNING}{PINNED_DB_TAG}{serialize_user_data(data)}"
-        sent_msg = await client.send_message(user_id, body)
-        await client.pin_message(user_id, sent_msg.id, notify=False)
-        USER_CACHE[user_id] = data
-
-        # Backup snapshot
-        await backup_to_channel(client, user_id, data)
-    except Exception as e:
-        logger.error(f"Failed to pin user storage message in DM for user {user_id}: {e}")
+    # Optional snapshot to private backup channel if configured
+    if BACKUP_CHANNEL_ID and client:
+        try:
+            await backup_to_channel(client, user_id, data)
+        except Exception:
+            pass
 
     return data
 
 
 async def save_user_data(client: TelegramClient, user_id: int, data: dict) -> bool:
     """
-    Saves updated user data:
-    - Edits pinned message in user DM.
-    - Saves snapshot to backup channel.
-    - Updates in-memory cache.
+    Saves updated user data cleanly and instantly:
+    - Updates in-memory session cache.
+    - Writes directly to local persistent disk store (user_data_store.json).
+    - Asynchronously writes snapshot to BACKUP_CHANNEL_ID (admin channel only).
+    - NEVER sends or pins raw JSON dumps into the user's personal chat!
     """
     USER_CACHE[user_id] = data
-    msg, _ = await find_pinned_data_message(client, user_id)
+    save_to_local_store(user_id, data)
 
-    serialized = serialize_user_data(data)
-    full_text = f"{PINNED_DB_WARNING}{PINNED_DB_TAG}{serialized}"
+    # Backup snapshot to admin backup channel if configured
+    if BACKUP_CHANNEL_ID and client:
+        try:
+            await backup_to_channel(client, user_id, data)
+        except Exception as e:
+            logger.debug(f"Backup channel snapshot note: {e}")
 
-    try:
-        if msg:
-            await client.edit_message(user_id, msg.id, full_text)
-        else:
-            sent_msg = await client.send_message(user_id, full_text)
-            await client.pin_message(user_id, sent_msg.id, notify=False)
-
-        # Write to backup channel asynchronously
-        await backup_to_channel(client, user_id, data)
-        return True
-    except Exception as e:
-        logger.error(f"Failed to update pinned database message for user {user_id}: {e}")
-        return False
+    return True

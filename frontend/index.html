@@ -40,6 +40,14 @@
             <button class="dest-edit-btn" id="btn-edit-dest">Change</button>
         </div>
 
+        <!-- Search Bar (Positioned directly below Destination banner) -->
+        <div class="search-container" style="margin-top: 10px; margin-bottom: 12px;">
+            <div class="search-input-box">
+                <span>🔍</span>
+                <input type="text" id="lecture-search" placeholder="Search chapters, topics, or lectures...">
+            </div>
+        </div>
+
         <!-- System Alerts -->
         <!-- 1. Generic Busy Alert (Triggered when backend backlog > 5) -->
         <div class="system-alert alert-busy" id="alert-busy" style="display: none;">
@@ -88,13 +96,8 @@
             </div>
         </section>
 
-        <!-- Search Bar -->
-        <div class="search-container">
-            <div class="search-input-box">
-                <span>🔍</span>
-                <input type="text" id="lecture-search" placeholder="Search chapters, topics, or lectures...">
-            </div>
-        </div>
+        <!-- Main Dashboard Sponsored Ad Banner -->
+        <div id="dashboard-ad-container" class="dashboard-ad-box"></div>
 
         <!-- Topics & Lectures Navigation Tree -->
         <main class="topics-list" id="topics-tree-container">
@@ -134,7 +137,7 @@
                 </div>
                 <div class="settings-guide-step">
                     <span class="settings-step-num">4</span>
-                    <span>Paste below and click <strong>Check Admin Rights</strong> &rarr; Save.</span>
+                    <span>Paste below and click <strong>Check Admin Rights & Save</strong>.</span>
                 </div>
                 <div class="settings-default-note">
                     💡 <em>Default: If no destination is set, all lectures are delivered directly to your <strong>Bot PM</strong>.</em>
@@ -155,18 +158,18 @@
                 </div>
 
                 <button type="button" class="btn-verify" id="btn-verify-dest">
-                    <span>🔍</span> Check Admin Rights & Connectivity
+                    <span>🔍</span> Check Admin Rights & Save Destination
                 </button>
 
                 <div class="verify-status-box" id="dest-verify-status"></div>
 
-                <div class="form-group" style="margin-top: 10px;">
+                <button type="submit" class="btn-primary" id="btn-save-settings" style="margin-top: 10px;">💾 Save & Apply Destination</button>
+
+                <div class="form-group" style="margin-top: 14px;">
                     <label for="input-bot-token">Custom Bot Token <span class="badge-vip">Phase 3 VIP</span></label>
                     <input type="text" id="input-bot-token" placeholder="Optional: 123456:ABC-DEF...">
                     <small>⚡ Add your personal bot token for dedicated 0-second queue speed (Feature coming soon).</small>
                 </div>
-
-                <button type="submit" class="btn-primary" id="btn-save-settings">Save Destination</button>
             </form>
         </div>
     </div>

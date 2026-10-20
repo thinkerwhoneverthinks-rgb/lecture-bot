@@ -262,6 +262,20 @@ async def api_verify_destination(request):
                 "error": f"⚠️ Bot is in '{chat_title}', but is NOT an Admin! Please promote the bot to Admin with 'Send Messages' rights."
             }, headers={"Access-Control-Allow-Origin": "*"})
 
+        # Automatically persist verified destination so user doesn't have to click a second button
+        saved_user_data = None
+        if user_id:
+            try:
+                u_data = await get_or_create_user_data(main_client, int(user_id))
+                u_data["custom_group"] = str(final_chat)
+                u_data["custom_topic"] = final_topic
+                u_data["custom_group_title"] = chat_title
+                await save_user_data(main_client, int(user_id), u_data)
+                saved_user_data = u_data
+                logger.info(f"Auto-saved destination for user {user_id}: {chat_title} ({final_chat}, topic {final_topic})")
+            except Exception as auto_save_err:
+                logger.warning(f"Auto-save note during verify: {auto_save_err}")
+
         topic_note = f" (Topic ID: {final_topic})" if final_topic else ""
         return web.json_response({
             "valid": True,
@@ -270,7 +284,8 @@ async def api_verify_destination(request):
             "chat_id": str(final_chat),
             "topic_id": final_topic,
             "is_admin": is_admin,
-            "message": f"✅ Verified! Bot is Admin in '{chat_title}'{topic_note}."
+            "user_data": saved_user_data,
+            "message": f"✅ Verified & Saved! Forwarding to '{chat_title}'{topic_note}."
         }, headers={"Access-Control-Allow-Origin": "*"})
 
     except Exception as e:

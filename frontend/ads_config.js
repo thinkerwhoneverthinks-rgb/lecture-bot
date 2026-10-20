@@ -57,7 +57,10 @@ class AdManager {
         // 2. Render Sticky Footer 320x50 Banner
         this.renderStickyFooter();
 
-        // 3. Start auto-rotation timer (every 35s safe interval)
+        // 3. Render Main Dashboard 300x250 Banner
+        this.renderDashboardBanner();
+
+        // 4. Start auto-rotation timer (every 35s safe interval)
         this.startAutoRefreshCycle();
     }
 
@@ -134,6 +137,42 @@ class AdManager {
 
         container.appendChild(iframe);
         console.log('[AdManager] Rendered Sticky Footer 320x50 Banner');
+    }
+
+    renderDashboardBanner() {
+        if (!this.config.enabled || !this.config.infeed_300x250?.enabled) return;
+
+        const container = document.getElementById('dashboard-ad-container');
+        if (!container) return;
+
+        const { key, script_url, width, height } = this.config.infeed_300x250;
+        container.innerHTML = '';
+
+        const card = document.createElement('div');
+        card.className = 'dashboard-ad-card';
+
+        const label = document.createElement('div');
+        label.className = 'infeed-ad-label';
+        label.innerHTML = '<span>📢</span><span>Sponsored</span><span>📢</span>';
+        card.appendChild(label);
+
+        const iframe = document.createElement('iframe');
+        iframe.className = 'infeed-ad-iframe';
+        iframe.width = width;
+        iframe.height = height;
+        iframe.frameBorder = '0';
+        iframe.scrolling = 'no';
+        iframe.style.border = 'none';
+        iframe.style.overflow = 'hidden';
+        iframe.style.borderRadius = '8px';
+        iframe.style.maxWidth = '100%';
+        iframe.srcdoc = this.buildIframeDoc(key, script_url, width, height);
+
+        card.appendChild(iframe);
+        container.appendChild(card);
+
+        this.infeedSlots.push({ id: 'dashboard-main-banner', iframe: iframe });
+        console.log('[AdManager] Rendered Dashboard Main Banner');
     }
 
     createInFeedAdCard(slotId) {
