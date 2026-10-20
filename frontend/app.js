@@ -2,14 +2,136 @@
  * Telegram Lecture Forwarder - Mini App Logic & Optimistic UI Engine
  */
 
+// =================================================================
+// 🛡️ SECURITY SHIELD: TELEGRAM-ONLY GUARD & ANTI-INSPECT PROTECTION
+// =================================================================
+(function() {
+    'use strict';
+
+    // 1. Telegram-Only Access Lock
+    // Checks if running inside Telegram Mini App environment
+    const isTelegram = !!(window.Telegram?.WebApp?.initData);
+    if (!isTelegram) {
+        const renderBlock = () => {
+            document.body.innerHTML = `
+                <div class="security-block-screen">
+                    <h2>🔒 Access Denied</h2>
+                    <p>This application can only be accessed securely inside the official <strong>Telegram</strong> app.</p>
+                </div>
+            `;
+        };
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', renderBlock);
+        } else {
+            renderBlock();
+        }
+        throw new Error("Direct browser access restricted.");
+    }
+
+    // 2. Block Right-Click Context Menu
+    document.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        return false;
+    }, true);
+
+    // 3. Block Developer Tools & View-Source Keyboard Shortcuts
+    document.addEventListener('keydown', (e) => {
+        // F12
+        if (e.key === 'F12' || e.keyCode === 123) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+
+        const isCtrlOrMeta = e.ctrlKey || e.metaKey;
+        const key = (e.key || '').toLowerCase();
+
+        // Ctrl/Cmd + Shift + I/J/C (DevTools, Console, Inspector)
+        if (isCtrlOrMeta && e.shiftKey && (key === 'i' || key === 'j' || key === 'c')) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+
+        // Ctrl/Cmd + U (View Source), Ctrl/Cmd + S (Save Page)
+        if (isCtrlOrMeta && (key === 'u' || key === 's')) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }
+    }, true);
+
+    // 4. Debugger Trap (Detects and Freezes DevTools in Chrome/Edge)
+    setInterval(() => {
+        const start = performance.now();
+        debugger;
+        const end = performance.now();
+        if (end - start > 100) {
+            document.body.innerHTML = `
+                <div class="security-block-screen">
+                    <h2>⛔ Security Violation</h2>
+                    <p>Developer inspection tools have been detected. Session terminated.</p>
+                </div>
+            `;
+            setTimeout(() => window.location.reload(), 1000);
+        }
+    }, 600);
+
+    // 5. DevTools Docked Window Dimension Sensor
+    function checkDevToolsDimension() {
+        const threshold = 160;
+        const widthDiff = window.outerWidth - window.innerWidth > threshold;
+        const heightDiff = window.outerHeight - window.innerHeight > threshold;
+        if (widthDiff || heightDiff) {
+            document.body.innerHTML = `
+                <div class="security-block-screen">
+                    <h2>⛔ Security Alert</h2>
+                    <p>Inspection tools detected. Please close Developer Tools to continue.</p>
+                </div>
+            `;
+        }
+    }
+    window.addEventListener('resize', checkDevToolsDimension);
+
+    // 6. Neutralize Console
+    try {
+        const noop = () => {};
+        ['log', 'debug', 'info', 'warn', 'error', 'dir', 'table'].forEach(fn => {
+            window.console[fn] = noop;
+        });
+        Object.freeze(window.console);
+    } catch (_) {}
+})();
+
+// =================================================================
+// 🌗 THEME CONTROLLER (LIGHT & DARK MODE)
+// =================================================================
+let currentTheme = localStorage.getItem('app_theme') || (window.Telegram?.WebApp?.colorScheme === 'light' ? 'light' : 'dark');
+
+function applyTheme(theme) {
+    currentTheme = theme;
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('app_theme', theme);
+    
+    const themeBtn = document.getElementById('btn-theme-toggle');
+    if (themeBtn) {
+        themeBtn.textContent = theme === 'light' ? '☀️' : '🌙';
+    }
+    
+    const tgInstance = window.Telegram?.WebApp;
+    if (tgInstance) {
+        const headerBg = theme === 'light' ? '#f1f5f9' : '#0a0d14';
+        if (tgInstance.setHeaderColor) tgInstance.setHeaderColor(headerBg);
+        if (tgInstance.setBackgroundColor) tgInstance.setBackgroundColor(headerBg);
+    }
+}
+
 // 1. Initialize Telegram WebApp SDK
 const tg = window.Telegram?.WebApp;
 if (tg) {
     tg.ready();
     tg.expand();
-    // Match header color with dark theme
-    if (tg.setHeaderColor) tg.setHeaderColor('#0a0d14');
-    if (tg.setBackgroundColor) tg.setBackgroundColor('#0a0d14');
+    applyTheme(currentTheme);
 }
 
 // User Identification (falls back to demo ID when viewed outside Telegram)
@@ -95,6 +217,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function setupEventListeners() {
+    // Theme toggle button
+    const btnThemeToggle = document.getElementById('btn-theme-toggle');
+    if (btnThemeToggle) {
+        btnThemeToggle.addEventListener('click', () => {
+            const nextTheme = currentTheme === 'light' ? 'dark' : 'light';
+            applyTheme(nextTheme);
+        });
+    }
+
     // Settings modal triggers
     btnSettings.addEventListener('click', openSettingsModal);
     btnEditDest.addEventListener('click', openSettingsModal);

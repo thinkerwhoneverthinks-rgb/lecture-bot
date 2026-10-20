@@ -70,12 +70,11 @@ class AdManager {
 
         // Check if demo/placeholder mode vs live script
         if (this.config.banner_300x250.script_url.includes('example_banner_key')) {
-            // Friendly preview placeholder showing where Adsterra renders
+            // Discreet placeholder without revealing partner or network name
             adWrapper.innerHTML = `
                 <div class="ad-preview-box">
-                    <div class="ad-preview-badge">📢 SPONSORED AD SPOT (300x250)</div>
-                    <div class="ad-preview-text">Adsterra banner renders here live!</div>
-                    <small>Auto-refreshes every ${this.config.banner_300x250.refresh_interval_sec}s for maximum views</small>
+                    <div class="ad-preview-badge">📢 ADVERTISEMENT</div>
+                    <div class="ad-preview-text">Sponsored Content</div>
                 </div>
             `;
         } else {

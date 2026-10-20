@@ -30,11 +30,37 @@
     --transition-smooth: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+:root[data-theme="light"] {
+    --bg-main: #f1f5f9;
+    --bg-card: rgba(255, 255, 255, 0.92);
+    --bg-card-hover: rgba(241, 245, 249, 1);
+    --border-color: rgba(0, 0, 0, 0.08);
+    --border-glow: rgba(79, 172, 254, 0.25);
+    
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #64748b;
+}
+
 * {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
     -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+input, textarea {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    user-select: text;
+}
+
+img, a {
+    -webkit-user-drag: none;
 }
 
 body {
@@ -44,6 +70,7 @@ body {
     min-height: 100vh;
     padding-bottom: 80px;
     overflow-x: hidden;
+    transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* Background Ambient Glow */
@@ -742,4 +769,93 @@ body {
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(-4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* =================================================================
+   LIGHT THEME OVERRIDES
+   ================================================================= */
+[data-theme="light"] .ambient-glow {
+    background: radial-gradient(circle at 50% 20%, rgba(79, 172, 254, 0.12) 0%, rgba(121, 40, 202, 0.05) 50%, transparent 80%);
+}
+
+[data-theme="light"] .gauge-box,
+[data-theme="light"] .search-input-box,
+[data-theme="light"] .lecture-item {
+    background: rgba(241, 245, 249, 0.9);
+}
+
+[data-theme="light"] .form-input {
+    background: #ffffff;
+    color: var(--text-primary);
+    border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .form-input:focus {
+    border-color: var(--accent-blue);
+}
+
+[data-theme="light"] .modal-card {
+    background: #ffffff;
+    border-color: rgba(0, 0, 0, 0.1);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .batch-card {
+    background: rgba(248, 250, 252, 0.95);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .progress-bar-bg {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .dest-badge-container {
+    background: rgba(241, 245, 249, 0.9);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .topic-accordion {
+    background: rgba(255, 255, 255, 0.95);
+    border-color: rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .topic-header:hover {
+    background: rgba(241, 245, 249, 0.6);
+}
+
+[data-theme="light"] .topic-count-pill,
+[data-theme="light"] .lecture-size-pill {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--text-secondary);
+}
+
+/* Security Screen Overlay */
+.security-block-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #0a0d14;
+    color: #ffffff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    z-index: 99999999;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+.security-block-screen h2 {
+    font-size: 24px;
+    margin-bottom: 12px;
+    color: #ef4444;
+}
+.security-block-screen p {
+    font-size: 15px;
+    color: #94a3b8;
+    max-width: 420px;
+    line-height: 1.5;
 }
