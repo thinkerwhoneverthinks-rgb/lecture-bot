@@ -103,15 +103,16 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
     try:
         # Fetch forum topics using MTProto request
         forum_topics_req = await client(GetForumTopicsRequest(
-            channel=entity,
-            offset_date=0,
+            peer=entity,
+            offset_date=None,
             offset_id=0,
             offset_topic=0,
             limit=100
         ))
-        raw_topics = forum_topics_req.topics
+        raw_topics = getattr(forum_topics_req, "topics", [])
+        logger.info(f"✅ Fetched {len(raw_topics)} topics from forum.")
     except Exception as e:
-        logger.warning(f"Could not fetch topics list via GetForumTopicsRequest: {e}. Will attempt direct scan.")
+        logger.warning(f"Could not fetch topics list via GetForumTopicsRequest: {e}. Will attempt direct topic scan.")
         raw_topics = []
 
     # If topics exist, iterate through each topic
@@ -123,8 +124,8 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
                 "title": t.title
             })
     else:
-        # Fallback default topics if group has single thread or general
-        topic_list.append({"thread_id": None, "title": "General / All Lectures"})
+        # Fallback to general topic (thread ID 1 in Telegram forums)
+        topic_list.append({"thread_id": 1, "title": "General / All Lectures"})
 
     for topic in topic_list:
         thread_id = topic["thread_id"]
@@ -143,41 +144,44 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
         if thread_id:
             kwargs["reply_to"] = thread_id
 
-        async for msg in client.iter_messages(**kwargs):
-            # 1. Detect Text Separators (e.g., '📌 Main Lectures', 'NCERT', 'DPP')
-            if msg.message and not msg.media:
-                text = msg.message.strip()
-                # Check if this text acts as a subfolder divider
-                # Usually short titles, headers starting with emoji or dashes or < 60 chars
-                if len(text) < 80:
-                    clean_name = text.strip("-=*# \n")
-                    if current_section["lectures"]:
-                        sections.append(current_section)
-                    current_section = {
-                        "name": clean_name if clean_name else text,
-                        "lectures": []
-                    }
-                    sequence_in_section = 1
-                    continue
+        try:
+            async for msg in client.iter_messages(**kwargs):
+                # 1. Detect Text Separators (e.g., '📌 Main Lectures', 'NCERT', 'DPP')
+                if msg.message and not msg.media:
+                    text = msg.message.strip()
+                    # Check if this text acts as a subfolder divider
+                    # Usually short titles, headers starting with emoji or dashes or < 60 chars
+                    if len(text) < 80:
+                        clean_name = text.strip("-=*# \n")
+                        if current_section["lectures"]:
+                            sections.append(current_section)
+                        current_section = {
+                            "name": clean_name if clean_name else text,
+                            "lectures": []
+                        }
+                        sequence_in_section = 1
+                        continue
 
-            # 2. Detect Media Files (Video, Document, Audio)
-            if msg.media and (msg.video or msg.document):
-                info = get_real_file_info(msg, sequence_in_section)
-                lecture_item = {
-                    "id": f"{thread_id or 0}_{msg.id}",
-                    "message_id": msg.id,
-                    "thread_id": thread_id,
-                    "title": info["title"],
-                    "caption": info["caption"],
-                    "file_name": info["file_name"],
-                    "file_size_mb": info["file_size_mb"],
-                    "file_size_bytes": info["file_size_bytes"],
-                    "batch_index": ((sequence_in_section - 1) // 5) + 1,
-                    "batch_label": f"Batch {(((sequence_in_section - 1) // 5) * 5) + 1}-{(((sequence_in_section - 1) // 5) * 5) + 5}"
-                }
-                current_section["lectures"].append(lecture_item)
-                sequence_in_section += 1
-                total_lectures_count += 1
+                # 2. Detect Media Files (Video, Document, Audio)
+                if msg.media and (msg.video or msg.document):
+                    info = get_real_file_info(msg, sequence_in_section)
+                    lecture_item = {
+                        "id": f"{thread_id or 0}_{msg.id}",
+                        "message_id": msg.id,
+                        "thread_id": thread_id,
+                        "title": info["title"],
+                        "caption": info["caption"],
+                        "file_name": info["file_name"],
+                        "file_size_mb": info["file_size_mb"],
+                        "file_size_bytes": info["file_size_bytes"],
+                        "batch_index": ((sequence_in_section - 1) // 5) + 1,
+                        "batch_label": f"Batch {(((sequence_in_section - 1) // 5) * 5) + 1}-{(((sequence_in_section - 1) // 5) * 5) + 5}"
+                    }
+                    current_section["lectures"].append(lecture_item)
+                    sequence_in_section += 1
+                    total_lectures_count += 1
+        except Exception as e:
+            logger.warning(f"Could not read messages for topic '{topic_title}' (thread {thread_id}): {e}")
 
         if current_section["lectures"]:
             sections.append(current_section)

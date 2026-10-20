@@ -329,7 +329,10 @@ async def init_telegram_clients():
             logger.error(f"Failed to start Worker Bot #{idx} with token: {e}")
 
     # Initial scan of Master Forum
-    await scan_master_forum(main_client)
+    try:
+        await scan_master_forum(main_client)
+    except Exception as e:
+        logger.error(f"Initial forum scan warning: {e}. Bot will proceed to start web server.")
 
     # Start Queue Dispatcher background task
     asyncio.create_task(start_queue_workers(all_clients))
