@@ -3,7 +3,7 @@ import json
 import logging
 import asyncio
 from telethon import TelegramClient
-from telethon.tl.functions.channels import GetForumTopicsRequest
+from telethon.tl.functions.messages import GetForumTopicsRequest
 from telethon.tl.types import (
     DocumentAttributeFilename,
     DocumentAttributeVideo,
