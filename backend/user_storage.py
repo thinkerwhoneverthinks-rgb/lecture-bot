@@ -52,23 +52,51 @@ def get_all_registered_users() -> list:
     return list(REGISTERED_USERS)
 
 
-async def sync_users_from_backup_channel(client: TelegramClient):
-    """Discovers and registers any users whose records exist in the private backup channel."""
-    if not BACKUP_CHANNEL_ID:
-        return
+# Local persistent disk store for disaster recovery without triggering bot GetHistoryRequest restrictions
+DATA_STORE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_data_store.json")
+
+
+def save_to_local_store(user_id: int, data: dict):
+    """Saves user data locally on disk for zero-latency crash recovery."""
     try:
-        count = 0
-        async for msg in client.iter_messages(BACKUP_CHANNEL_ID, limit=500):
-            if msg.message and "BACKUP::user_" in msg.message:
-                parts = msg.message.split("BACKUP::user_", 1)
-                if len(parts) > 1:
-                    raw_id = parts[1].split("::", 1)[0]
-                    if raw_id.isdigit():
-                        register_user(int(raw_id))
-                        count += 1
-        logger.info(f"👥 Synced {count} user(s) from private backup channel.")
+        store = {}
+        if os.path.exists(DATA_STORE_FILE):
+            with open(DATA_STORE_FILE, "r", encoding="utf-8") as f:
+                store = json.load(f)
+        store[str(user_id)] = data
+        with open(DATA_STORE_FILE, "w", encoding="utf-8") as f:
+            json.dump(store, f)
     except Exception as e:
-        logger.warning(f"Could not sync users from backup channel: {e}")
+        logger.debug(f"Could not write to local user store: {e}")
+
+
+def load_from_local_store(user_id: int) -> dict:
+    """Loads user data snapshot from local store."""
+    try:
+        if os.path.exists(DATA_STORE_FILE):
+            with open(DATA_STORE_FILE, "r", encoding="utf-8") as f:
+                store = json.load(f)
+            return store.get(str(user_id))
+    except Exception as e:
+        logger.debug(f"Could not read from local user store: {e}")
+    return None
+
+
+async def sync_users_from_backup_channel(client: TelegramClient):
+    """
+    Syncs registered users from local disk storage.
+    Note: Telegram API restricts bot users from calling GetHistoryRequest on channels.
+    """
+    try:
+        if os.path.exists(DATA_STORE_FILE):
+            with open(DATA_STORE_FILE, "r", encoding="utf-8") as f:
+                store = json.load(f)
+            for uid_str in store.keys():
+                if uid_str.isdigit():
+                    register_user(int(uid_str))
+        logger.info(f"👥 User registry initialized with {len(REGISTERED_USERS)} student(s).")
+    except Exception as e:
+        logger.debug(f"User sync note: {e}")
 
 
 def serialize_user_data(data: dict) -> str:
@@ -94,7 +122,7 @@ async def find_pinned_data_message(client: TelegramClient, user_id: int):
     Returns (message_obj, parsed_data) or (None, None).
     """
     try:
-        # Fetch pinned messages or recent messages in user DM
+        # Fetch pinned messages or recent messages in user DM (Allowed for bot in 1-on-1 DM)
         messages = await client.get_messages(user_id, limit=20)
         for msg in messages:
             if msg.message and PINNED_DB_TAG in msg.message:
@@ -108,26 +136,20 @@ async def find_pinned_data_message(client: TelegramClient, user_id: int):
 
 async def search_backup_channel(client: TelegramClient, user_id: int) -> dict:
     """
-    Searches the private backup channel for the latest data snapshot of user_id.
-    Format in backup channel: BACKUP::user_{user_id}::USER_DATA::{json}
+    Retrieves backup snapshot of user data.
+    Checks memory cache and local persistent store.
     """
-    if not BACKUP_CHANNEL_ID:
-        return None
-
-    search_tag = f"BACKUP::user_{user_id}::{PINNED_DB_TAG}"
-    try:
-        async for msg in client.iter_messages(BACKUP_CHANNEL_ID, search=search_tag, limit=10):
-            if msg.message and search_tag in msg.message:
-                raw_json = msg.message.split(search_tag, 1)[1].strip()
-                return json.loads(raw_json)
-    except Exception as e:
-        logger.warning(f"Failed to query backup channel for user {user_id}: {e}")
-
-    return None
+    if user_id in USER_CACHE:
+        return USER_CACHE[user_id]
+    return load_from_local_store(user_id)
 
 
 async def backup_to_channel(client: TelegramClient, user_id: int, data: dict):
-    """Sends a point-in-time snapshot to the private backup channel."""
+    """
+    Sends a point-in-time snapshot to the private backup channel.
+    (send_message is fully allowed for bot users)
+    """
+    save_to_local_store(user_id, data)
     if not BACKUP_CHANNEL_ID:
         return
 
@@ -136,7 +158,7 @@ async def backup_to_channel(client: TelegramClient, user_id: int, data: dict):
         backup_text = f"BACKUP::user_{user_id}::{PINNED_DB_TAG}{payload}"
         await client.send_message(BACKUP_CHANNEL_ID, backup_text)
     except Exception as e:
-        logger.error(f"Failed to write snapshot to backup channel for user {user_id}: {e}")
+        logger.debug(f"Note: Backup snapshot post: {e}")
 
 
 async def get_or_create_user_data(client: TelegramClient, user_id: int) -> dict:

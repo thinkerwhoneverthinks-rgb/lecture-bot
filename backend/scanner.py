@@ -14,11 +14,22 @@ from telethon.tl.types import (
 from config import FORUM_CHAT_ID, logger
 
 # Cache for fast in-memory access by REST API
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lecture_map_cache.json")
 LECTURE_MAP_CACHE = {
     "topics": [],
     "total_lectures": 0,
     "last_scanned": None
 }
+
+if os.path.exists(CACHE_FILE):
+    try:
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            disk_cache = json.load(f)
+            if isinstance(disk_cache, dict) and "topics" in disk_cache:
+                LECTURE_MAP_CACHE = disk_cache
+                logger.info(f"💾 Loaded cached lecture map from disk ({LECTURE_MAP_CACHE.get('total_lectures', 0)} lectures).")
+    except Exception as e:
+        logger.debug(f"Could not load disk cache: {e}")
 
 LECTURE_MAP_PIN_TAG = "#LECTURE_MAP_STORAGE"
 
@@ -408,9 +419,19 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
 
 async def save_lecture_map_to_forum_pin(client: TelegramClient, entity, data: dict):
     """
-    Saves/Updates the LECTURE_MAP in Pinned Message of Forum Group.
-    Survives bot restarts.
+    Saves/Updates the LECTURE_MAP.
+    1. Saves locally to lecture_map_cache.json for instant disaster recovery.
+    2. Updates or creates pinned message in the Forum Group using bot-compatible methods.
     """
+    # 1. Save local backup to disk
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        logger.info(f"💾 Persisted lecture catalog cache to disk.")
+    except Exception as e:
+        logger.debug(f"Could not write local catalog cache file: {e}")
+
+    # 2. Pin/Edit in Forum Supergroup
     try:
         summary_text = (
             f"{LECTURE_MAP_PIN_TAG}\n"
@@ -420,20 +441,28 @@ async def save_lecture_map_to_forum_pin(client: TelegramClient, entity, data: di
             f"⚠️ Bot uses this pinned index to serve lectures instantly."
         )
 
-        # Check existing pinned messages
-        pinned = await client.get_messages(entity, filter=None, limit=5)
-        target_msg = None
-        for m in pinned:
-            if m.message and LECTURE_MAP_PIN_TAG in m.message:
-                target_msg = m
-                break
+        from telethon.tl.functions.channels import GetFullChannelRequest
+        target_msg_id = None
+        try:
+            full = await client(GetFullChannelRequest(entity))
+            pinned_id = getattr(full.full_chat, 'pinned_msg_id', None)
+            if pinned_id:
+                # Fetching a message by its ID is allowed for bots (uses channels.getMessages)
+                msgs = await client.get_messages(entity, ids=[pinned_id])
+                if msgs and msgs[0] and msgs[0].message and LECTURE_MAP_PIN_TAG in msgs[0].message:
+                    target_msg_id = pinned_id
+        except Exception as fe:
+            logger.debug(f"Could not check pinned msg via full chat: {fe}")
 
-        if target_msg:
-            await client.edit_message(entity, target_msg.id, summary_text)
+        if target_msg_id:
+            await client.edit_message(entity, target_msg_id, summary_text)
             logger.info("📌 Updated existing LECTURE_MAP pinned message in Forum Group.")
         else:
             sent_msg = await client.send_message(entity, summary_text)
-            await client.pin_message(entity, sent_msg.id, notify=False)
-            logger.info("📌 Created and pinned new LECTURE_MAP message in Forum Group.")
+            try:
+                await client.pin_message(entity, sent_msg.id, notify=False)
+                logger.info("📌 Created and pinned new LECTURE_MAP message in Forum Group.")
+            except Exception as pe:
+                logger.debug(f"Note: Could not pin message (check bot pin permissions in group): {pe}")
     except Exception as e:
-        logger.warning(f"Could not pin LECTURE_MAP message in forum: {e}")
+        logger.debug(f"Could not update pinned storage in forum: {e}")
