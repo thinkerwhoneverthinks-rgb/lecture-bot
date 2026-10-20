@@ -506,6 +506,7 @@ async function triggerBackgroundQueue(lecture) {
                 lecture_id: lecture.id,
                 message_id: lecture.message_id,
                 thread_id: lecture.thread_id,
+                from_chat: lecture.from_chat,
                 title: lecture.title
             })
         });
@@ -594,8 +595,8 @@ function renderCatalog(catalog) {
     if (!catalog || !catalog.topics || catalog.topics.length === 0) {
         topicsTreeContainer.innerHTML = `
             <div style="text-align: center; padding: 30px; color: var(--text-muted);">
-                📭 No lectures found in Master Forum yet.<br>
-                <small>Send lectures to your forum topics and tap 🔄 Refresh.</small>
+                📚 Lectures are being updated.<br>
+                <small>Tap 🔄 Refresh to check for new uploads.</small>
             </div>
         `;
         return;
@@ -614,6 +615,7 @@ function renderCatalog(catalog) {
             <div class="topic-title-group">
                 <span class="topic-icon">📚</span>
                 <span class="topic-name">${escapeHtml(topic.title)}</span>
+                ${topic.category ? `<span class="topic-category-badge" style="font-size: 0.72rem; background: rgba(99, 102, 241, 0.2); color: #a5b4fc; padding: 2px 7px; border-radius: 6px; font-weight: 600; border: 1px solid rgba(99, 102, 241, 0.3); margin-left: 4px;">${escapeHtml(topic.category)}</span>` : ''}
                 <span class="topic-count-pill">${topic.lecture_count || 0} Lecs</span>
             </div>
             <span class="topic-toggle-icon">▼</span>

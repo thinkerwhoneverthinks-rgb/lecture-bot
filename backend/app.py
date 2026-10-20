@@ -164,12 +164,16 @@ async def api_queue_one(request):
             "error": "No destination group set! Please configure your group in Settings first."
         }, status=400, headers={"Access-Control-Allow-Origin": "*"})
 
+    from_chat = body.get("from_chat") or FORUM_CHAT_ID
+    if isinstance(from_chat, str) and (from_chat.startswith("-100") or from_chat.lstrip("-").isdigit()):
+        from_chat = int(from_chat)
+
     # Put job in queue
     job = await add_forward_job(
         user_id=user_id,
         dest_chat=dest_chat,
         dest_topic=dest_topic,
-        from_chat=FORUM_CHAT_ID,
+        from_chat=from_chat,
         message_id=int(message_id),
         lecture_id=str(lecture_id),
         title=title

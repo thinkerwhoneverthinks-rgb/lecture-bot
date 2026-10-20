@@ -97,6 +97,37 @@ Inside any topic (e.g., `Biology`):
 * It automatically creates and pins a message tagged with `#LECTURE_MAP_STORAGE` in the Forum Group.
 * Whenever you upload new lectures in the forum, simply send `/rescan` in DM with your bot to refresh the catalog!
 
+### Step 5: Hybrid Catalog Curation (`catalog_config.json`)
+You can manually curate coaching names, multi-subject trees, and message ID ranges (`from msg 100 to 145`) across **multiple source groups**:
+* Open `backend/catalog_config.json` (see `backend/catalog_config.example.json` for full template):
+  ```json
+  {
+    "hidden_topics": ["Drafts", "Testing", 99],
+    "categories": [
+      {
+        "name": "🎓 PW Yakeen NEET 2025",
+        "subjects": [
+          {
+            "name": "⚡ Physics",
+            "chapters": [
+              {
+                "name": "Ray Optics (Full Course)",
+                "source_group": -1001234567890,
+                "msg_range": [100, 145]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "auto_detect_remaining": true
+  }
+  ```
+* **Message ID range in 5 seconds:** Right-click first video in Telegram ➡️ Copy Message Link (ID 100), right-click last video ➡️ Copy Message Link (ID 145). Set `"msg_range": [100, 145]`.
+* **Multi-Group Source:** Forward from Channel A or Forum B by specifying `"source_group": -100...`.
+* **Hide Draft Topics:** Add topic IDs or titles to `"hidden_topics"` so students never see incomplete drafts.
+* Send `/rescan` in bot DM anytime to re-index immediately.
+
 ---
 
 ## 3. Zero-Database Storage & Auto-Restore System

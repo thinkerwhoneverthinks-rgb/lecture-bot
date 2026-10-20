@@ -135,11 +135,15 @@ async def process_job(client: TelegramClient, job: dict) -> bool:
             target_chat = int(dest_chat)
         dest_entity = await client.get_entity(target_chat)
 
+        source_peer = from_chat
+        if isinstance(from_chat, str) and (from_chat.startswith("-100") or from_chat.lstrip("-").isdigit()):
+            source_peer = int(from_chat)
+
         # Forward or Copy message
         forward_kwargs = {
             "entity": dest_entity,
             "messages": message_id,
-            "from_peer": from_chat
+            "from_peer": source_peer
         }
         if dest_topic:
             forward_kwargs["reply_to"] = int(dest_topic)

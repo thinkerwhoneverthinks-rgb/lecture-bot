@@ -1,0 +1,6 @@
+{
+  "_comment": "Hybrid Catalog Config: Define custom coaching batches, message ID ranges, or hide draft topics. Leave 'categories' empty to auto-detect all forum topics automatically.",
+  "hidden_topics": [],
+  "categories": [],
+  "auto_detect_remaining": true
+}

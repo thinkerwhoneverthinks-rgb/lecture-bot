@@ -1,0 +1,73 @@
+{
+  "_documentation": {
+    "description": "Hybrid Lecture Catalog Configuration",
+    "features": [
+      "Define coaching / batch names (e.g. PW Yakeen NEET 2025, Allen)",
+      "Multi-subject folder tree (Physics, Chemistry, Biology)",
+      "Set chapters by message ID ranges (e.g. [100, 145])",
+      "Support multiple source channels or forum groups",
+      "Hide draft or test forum topics from students (hidden_topics)",
+      "Auto-detect remaining topics from Master Forum (auto_detect_remaining)"
+    ]
+  },
+  "hidden_topics": [
+    "Drafts",
+    "Admin Notes",
+    99
+  ],
+  "categories": [
+    {
+      "name": "🎓 PW Yakeen NEET 2025",
+      "subjects": [
+        {
+          "name": "⚡ Physics",
+          "source_group": null,
+          "chapters": [
+            {
+              "name": "Ray Optics (Full Course)",
+              "source_group": null,
+              "topic_id": 2,
+              "msg_range": [100, 145]
+            },
+            {
+              "name": "Thermodynamics",
+              "source_group": null,
+              "topic_id": null,
+              "msg_range": [150, 190]
+            }
+          ]
+        },
+        {
+          "name": "🧬 Biology",
+          "source_group": null,
+          "chapters": [
+            {
+              "name": "Genetics & Evolution",
+              "source_group": -1001234567890,
+              "topic_id": null,
+              "msg_range": [200, 260]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "📚 Allen Classroom 2025",
+      "subjects": [
+        {
+          "name": "🧪 Chemistry",
+          "source_group": -1009876543210,
+          "chapters": [
+            {
+              "name": "Organic Reaction Mechanisms",
+              "source_group": -1009876543210,
+              "topic_id": null,
+              "msg_range": [50, 95]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "auto_detect_remaining": true
+}
