@@ -24,7 +24,7 @@ from telethon.errors import UserNotParticipantError
 from telethon import errors
 from scanner import (
     scan_master_forum,
-    LECTURE_MAP_CACHE,
+    get_lecture_map,
     load_catalog_config,
     toggle_hidden_topic,
     add_curated_chapter
@@ -83,7 +83,7 @@ async def handle_cors(request):
 
 async def api_get_lectures(request):
     """Returns the cached master LECTURE_MAP JSON for the Mini App."""
-    return web.json_response(LECTURE_MAP_CACHE, headers={"Access-Control-Allow-Origin": "*"})
+    return web.json_response(get_lecture_map(), headers={"Access-Control-Allow-Origin": "*"})
 
 
 async def api_get_user_data(request):
@@ -266,15 +266,16 @@ async def api_admin_info(request):
     users = get_all_registered_users()
     q = get_queue_status()
 
+    catalog = get_lecture_map()
     return web.json_response({
         "is_admin": True,
         "admin_id": ADMIN_ID,
         "total_students": len(users),
-        "total_lectures": LECTURE_MAP_CACHE.get("total_lectures", 0),
-        "topics": LECTURE_MAP_CACHE.get("all_topics", LECTURE_MAP_CACHE.get("topics", [])),
+        "total_lectures": catalog.get("total_lectures", 0),
+        "topics": catalog.get("all_topics", catalog.get("topics", [])),
         "hidden_topics": [str(h) for h in config.get("hidden_topics", [])],
         "categories": config.get("categories", []),
-        "last_scanned": LECTURE_MAP_CACHE.get("last_scanned"),
+        "last_scanned": catalog.get("last_scanned"),
         "queue": q
     }, headers={"Access-Control-Allow-Origin": "*"})
 
@@ -295,11 +296,12 @@ async def api_admin_toggle_topic(request):
         return web.json_response({"error": "Missing topic_key"}, status=400)
 
     new_config = toggle_hidden_topic(topic_key)
+    catalog = get_lecture_map()
 
     return web.json_response({
         "success": True,
         "hidden_topics": [str(h) for h in new_config.get("hidden_topics", [])],
-        "topics": LECTURE_MAP_CACHE.get("all_topics", LECTURE_MAP_CACHE.get("topics", []))
+        "topics": catalog.get("all_topics", catalog.get("topics", []))
     }, headers={"Access-Control-Allow-Origin": "*"})
 
 
@@ -328,10 +330,11 @@ async def api_admin_add_chapter(request):
     if main_client:
         await scan_master_forum(main_client)
 
+    catalog = get_lecture_map()
     return web.json_response({
         "success": True,
-        "topics": LECTURE_MAP_CACHE.get("all_topics", LECTURE_MAP_CACHE.get("topics", [])),
-        "total_lectures": LECTURE_MAP_CACHE.get("total_lectures", 0)
+        "topics": catalog.get("all_topics", catalog.get("topics", [])),
+        "total_lectures": catalog.get("total_lectures", 0)
     }, headers={"Access-Control-Allow-Origin": "*"})
 
 
@@ -349,10 +352,11 @@ async def api_admin_rescan(request):
     if main_client:
         await scan_master_forum(main_client)
 
+    catalog = get_lecture_map()
     return web.json_response({
         "success": True,
-        "topics": LECTURE_MAP_CACHE.get("all_topics", LECTURE_MAP_CACHE.get("topics", [])),
-        "total_lectures": LECTURE_MAP_CACHE.get("total_lectures", 0)
+        "topics": catalog.get("all_topics", catalog.get("topics", [])),
+        "total_lectures": catalog.get("total_lectures", 0)
     }, headers={"Access-Control-Allow-Origin": "*"})
 
 
@@ -406,8 +410,10 @@ def setup_bot_handlers(client: TelegramClient):
             return
 
         status_msg = await event.respond("🔄 Re-scanning master forum topics and lectures. Please wait...")
-        await scan_master_forum(client)
-        await status_msg.edit(f"✅ Scan complete! {LECTURE_MAP_CACHE['total_lectures']} lectures indexed across {len(LECTURE_MAP_CACHE['topics'])} topics.")
+        scanned_catalog = await scan_master_forum(client)
+        total_lecs = scanned_catalog.get("total_lectures", 0)
+        topic_count = len(scanned_catalog.get("topics", []))
+        await status_msg.edit(f"✅ Scan complete! {total_lecs} lectures indexed across {topic_count} topics.")
 
     @client.on(events.NewMessage(pattern=r'^/admin'))
     async def admin_handler(event):
@@ -417,13 +423,14 @@ def setup_bot_handlers(client: TelegramClient):
 
         q = get_queue_status()
         users = get_all_registered_users()
-        last_scanned = LECTURE_MAP_CACHE.get("last_scanned") or "Never"
+        catalog = get_lecture_map()
+        last_scanned = catalog.get("last_scanned") or "Never"
 
         text = (
             "👑 **Admin Dashboard**\n\n"
             f"👥 **Total Registered Students:** {len(users)}\n"
-            f"📚 **Indexed Topics:** {len(LECTURE_MAP_CACHE['topics'])}\n"
-            f"🎬 **Total Lectures:** {LECTURE_MAP_CACHE['total_lectures']}\n"
+            f"📚 **Indexed Topics:** {len(catalog.get('topics', []))}\n"
+            f"🎬 **Total Lectures:** {catalog.get('total_lectures', 0)}\n"
             f"🕒 **Last Rescan:** {last_scanned}\n\n"
             "⚡ **Queue Performance:**\n"
             f"• Queue Backlog: {q['backlog_count']} jobs\n"
@@ -486,10 +493,11 @@ def setup_bot_handlers(client: TelegramClient):
     @client.on(events.NewMessage(pattern=r'^/status'))
     async def status_handler(event):
         q = get_queue_status()
+        catalog = get_lecture_map()
         text = (
             f"📊 **System Status:**\n"
-            f"• Indexed Lectures: {LECTURE_MAP_CACHE['total_lectures']}\n"
-            f"• Topics Scanned: {len(LECTURE_MAP_CACHE['topics'])}\n"
+            f"• Indexed Lectures: {catalog.get('total_lectures', 0)}\n"
+            f"• Topics Scanned: {len(catalog.get('topics', []))}\n"
             f"• Active Workers: {q['worker_count']}\n"
             f"• Current Queue Backlog: {q['backlog_count']}\n"
             f"• High-Load Busy Mode: {'YES' if q['is_busy'] else 'NO'}"

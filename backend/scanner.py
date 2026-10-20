@@ -18,16 +18,27 @@ from config import FORUM_CHAT_ID, logger
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lecture_map_cache.json")
 LECTURE_MAP_CACHE = {
     "topics": [],
+    "all_topics": [],
     "total_lectures": 0,
     "last_scanned": None
 }
+
+def get_lecture_map() -> dict:
+    """Returns the live in-memory lecture catalog."""
+    return LECTURE_MAP_CACHE
+
+def update_lecture_cache(new_data: dict) -> dict:
+    """Updates LECTURE_MAP_CACHE in-place so all references across modules stay synchronized."""
+    LECTURE_MAP_CACHE.clear()
+    LECTURE_MAP_CACHE.update(new_data)
+    return LECTURE_MAP_CACHE
 
 if os.path.exists(CACHE_FILE):
     try:
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             disk_cache = json.load(f)
             if isinstance(disk_cache, dict) and "topics" in disk_cache:
-                LECTURE_MAP_CACHE = disk_cache
+                update_lecture_cache(disk_cache)
                 logger.info(f"💾 Loaded cached lecture map from disk ({LECTURE_MAP_CACHE.get('total_lectures', 0)} lectures).")
     except Exception as e:
         logger.debug(f"Could not load disk cache: {e}")
@@ -249,29 +260,67 @@ def is_in_topic(msg, target_topic_id: int) -> bool:
     if not reply:
         # In Telegram supergroups, General topic messages have no reply_to
         return target_topic_id == 1
-    top_id = getattr(reply, 'reply_to_top_id', None) or getattr(reply, 'reply_to_msg_id', None)
-    return top_id == target_topic_id
+
+    top_id = getattr(reply, 'reply_to_top_id', None)
+    if top_id is not None:
+        return top_id == target_topic_id
+
+    if getattr(reply, 'forum_topic', False):
+        return getattr(reply, 'reply_to_msg_id', None) == target_topic_id
+
+    # Normal reply without forum_topic flag belongs to General (thread 1)
+    return target_topic_id == 1
 
 
 async def detect_max_message_id(client: TelegramClient, entity) -> int:
     """
-    Finds the highest message ID in the group without triggering GetHistoryRequest.
-    Tests exponential candidate IDs in one batch.
+    Finds the highest message ID in the group accurately:
+    1. Tries direct latest message via client.get_messages(entity, limit=1).
+    2. Fallback: Probes exponential IDs and binary searches the exact boundary so NO messages are truncated.
     """
-    probes = [10, 25, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000]
+    # Tier 1: Direct latest message
     try:
-        msgs = await client.get_messages(entity, ids=probes)
-        valid_ids = [m.id for m in msgs if m and getattr(m, 'id', None) and not getattr(m, 'empty', False)]
-        if not valid_ids:
-            return 100  # Default fallback range
-        highest_probe = max(valid_ids)
-        fine_probes = list(range(highest_probe, highest_probe + 150, 25))
-        fine_msgs = await client.get_messages(entity, ids=fine_probes)
-        fine_ids = [m.id for m in fine_msgs if m and getattr(m, 'id', None) and not getattr(m, 'empty', False)]
-        return max(fine_ids) if fine_ids else highest_probe
+        latest = await client.get_messages(entity, limit=1)
+        if latest and len(latest) > 0 and getattr(latest[0], 'id', None):
+            logger.info(f"📍 Detected latest message ID: {latest[0].id}")
+            return latest[0].id
     except Exception as e:
-        logger.debug(f"Max ID detection note: {e}")
-        return 150
+        logger.debug(f"Direct latest message probe note: {e}")
+
+    # Tier 2: Exponential probe + Binary search
+    try:
+        probes = [10, 25, 50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 10000]
+        msgs = await client.get_messages(entity, ids=probes)
+        valid = [m.id for m in msgs if m and getattr(m, 'id', None) and not getattr(m, 'empty', False)]
+
+        if not valid:
+            small_msgs = await client.get_messages(entity, ids=list(range(1, 15)))
+            small_valid = [m.id for m in small_msgs if m and getattr(m, 'id', None) and not getattr(m, 'empty', False)]
+            return max(small_valid) if small_valid else 100
+
+        low = max(valid)
+        high = None
+        for p in probes:
+            if p > low:
+                high = p
+                break
+        if not high:
+            high = low + 500
+
+        # Binary search between low and high to find the exact top message ID
+        while low < high:
+            mid = (low + high + 1) // 2
+            test_msgs = await client.get_messages(entity, ids=[mid])
+            if test_msgs and test_msgs[0] and getattr(test_msgs[0], 'id', None) and not getattr(test_msgs[0], 'empty', False):
+                low = mid
+            else:
+                high = mid - 1
+
+        logger.info(f"📍 Binary search detected max message ID: {low}")
+        return low
+    except Exception as e:
+        logger.warning(f"Error in max message ID detection: {e}")
+        return 200
 
 
 async def fetch_messages_by_ids(client: TelegramClient, entity, start_id: int, end_id: int) -> list:
@@ -337,7 +386,9 @@ async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: i
         else:
             # Auto-detect message ID range in group and fetch via bot-compliant ID requests
             max_id = await detect_max_message_id(client, source_entity)
-            all_raw = await fetch_messages_by_ids(client, source_entity, 1, max_id)
+            # Add safety buffer of 30 IDs to ensure no trailing messages are cut off
+            end_id = max_id + 30
+            all_raw = await fetch_messages_by_ids(client, source_entity, 1, end_id)
             if topic_id:
                 messages_to_process = [m for m in all_raw if is_in_topic(m, int(topic_id))]
             else:
@@ -351,8 +402,9 @@ async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: i
                     clean_name = text.strip("-=*# \n")
                     if current_section["lectures"]:
                         sections.append(current_section)
+                    sec_name = clean_name if (not ch_name or ch_name == "General") else (f"{ch_name} • {clean_name}" if clean_name else ch_name)
                     current_section = {
-                        "name": f"{ch_name} • {clean_name}" if clean_name else ch_name,
+                        "name": sec_name or ch_name,
                         "lectures": []
                     }
                     sequence_in_section = 1
@@ -591,12 +643,12 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
     visible_topics = [t for t in topics_data if not t.get("is_hidden")]
     total_visible_lectures = sum(t.get("lecture_count", 0) for t in visible_topics)
 
-    LECTURE_MAP_CACHE = {
+    update_lecture_cache({
         "topics": visible_topics,
         "all_topics": topics_data,
         "total_lectures": total_visible_lectures,
         "last_scanned": datetime.datetime.utcnow().isoformat()
-    }
+    })
 
     logger.info(f"🎉 Catalog ready! Total topics: {len(topics_data)} ({len(visible_topics)} visible), Total lectures: {total_visible_lectures}")
 
