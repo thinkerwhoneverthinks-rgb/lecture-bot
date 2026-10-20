@@ -8,7 +8,8 @@ from telethon.tl.functions.messages import GetForumTopicsRequest
 from telethon.tl.types import (
     DocumentAttributeFilename,
     DocumentAttributeVideo,
-    MessageMediaDocument
+    MessageMediaDocument,
+    MessageActionTopicCreate
 )
 
 from config import FORUM_CHAT_ID, logger
@@ -180,29 +181,30 @@ async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: i
 
     try:
         if message_ids and isinstance(message_ids, list):
-            # Fetch specific list of message IDs
+            # Fetch specific list of message IDs (channels.getMessages is allowed for bots)
             raw_msgs = await client.get_messages(source_entity, ids=message_ids)
             messages_to_process = [m for m in raw_msgs if m]
         elif msg_range and isinstance(msg_range, list) and len(msg_range) == 2:
             start_id = min(int(msg_range[0]), int(msg_range[1]))
             end_id = max(int(msg_range[0]), int(msg_range[1]))
-            kwargs = {
-                "entity": source_entity,
-                "min_id": start_id - 1,
-                "max_id": end_id + 1,
-                "reverse": True
-            }
-            if topic_id:
-                kwargs["reply_to"] = int(topic_id)
+            # Fetch by ID chunks (avoids GetHistoryRequest bot restrictions completely)
+            for chunk_start in range(start_id, end_id + 1, 100):
+                chunk_ids = list(range(chunk_start, min(chunk_start + 100, end_id + 1)))
+                chunk_msgs = await client.get_messages(source_entity, ids=chunk_ids)
+                messages_to_process.extend([m for m in chunk_msgs if m])
+        elif topic_id:
+            # Querying replies in a topic uses GetRepliesRequest (allowed for bots)
+            kwargs = {"entity": source_entity, "reply_to": int(topic_id), "limit": 2000, "reverse": True}
             async for m in client.iter_messages(**kwargs):
                 messages_to_process.append(m)
         else:
-            # Fallback to topic_id or general scan
-            kwargs = {"entity": source_entity, "limit": 2000, "reverse": True}
-            if topic_id:
-                kwargs["reply_to"] = int(topic_id)
-            async for m in client.iter_messages(**kwargs):
-                messages_to_process.append(m)
+            # Fallback to General topic (thread 1)
+            kwargs = {"entity": source_entity, "reply_to": 1, "limit": 2000, "reverse": True}
+            try:
+                async for m in client.iter_messages(**kwargs):
+                    messages_to_process.append(m)
+            except Exception as e:
+                logger.debug(f"General topic scan note: {e}")
 
         for msg in messages_to_process:
             # 1. Detect subfolder text dividers if present
@@ -256,6 +258,57 @@ async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: i
         s["batches"] = batches
 
     return sections, total_lectures
+
+
+async def discover_forum_topics(client: TelegramClient, entity) -> list:
+    """
+    Discovers forum topics in the supergroup:
+    1. Attempts GetForumTopicsRequest (works if running under a Telegram user account).
+    2. If restricted for bot users, probes for MessageActionTopicCreate service messages using channels.getMessages.
+    3. Always includes the General topic (thread ID 1).
+    """
+    discovered_topics = []
+    seen_ids = set()
+
+    # Tier 1: Try GetForumTopicsRequest (if user session)
+    try:
+        req = await client(GetForumTopicsRequest(
+            peer=entity,
+            offset_date=None,
+            offset_id=0,
+            offset_topic=0,
+            limit=100
+        ))
+        raw_topics = getattr(req, "topics", [])
+        for t in raw_topics:
+            discovered_topics.append({"thread_id": t.id, "title": t.title})
+            seen_ids.add(t.id)
+        if discovered_topics:
+            logger.info(f"🔍 Discovered {len(discovered_topics)} topics via GetForumTopicsRequest.")
+            return discovered_topics
+    except Exception as e:
+        logger.debug(f"GetForumTopicsRequest note (bots cannot invoke this API directly): {e}")
+
+    # Tier 2: Bot-compatible topic discovery via MessageActionTopicCreate service messages
+    try:
+        sample_ids = list(range(1, 150))
+        msgs = await client.get_messages(entity, ids=sample_ids)
+        for m in msgs:
+            if m and getattr(m, 'action', None) and isinstance(m.action, MessageActionTopicCreate):
+                t_title = getattr(m.action, 'title', f"Topic {m.id}")
+                if m.id not in seen_ids:
+                    discovered_topics.append({"thread_id": m.id, "title": t_title})
+                    seen_ids.add(m.id)
+        if discovered_topics:
+            logger.info(f"🔍 Discovered {len(discovered_topics)} topic(s) via service messages.")
+    except Exception as e:
+        logger.debug(f"Topic probe notice: {e}")
+
+    # Always ensure General topic is present
+    if 1 not in seen_ids:
+        discovered_topics.insert(0, {"thread_id": 1, "title": "General"})
+
+    return discovered_topics
 
 
 async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_CHAT_ID):
@@ -352,28 +405,21 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
     if config.get("auto_detect_remaining", True) and forum_chat_id:
         try:
             entity = await client.get_entity(forum_chat_id)
-            forum_topics_req = await client(GetForumTopicsRequest(
-                peer=entity,
-                offset_date=None,
-                offset_id=0,
-                offset_topic=0,
-                limit=100
-            ))
-            raw_topics = getattr(forum_topics_req, "topics", [])
-            logger.info(f"🔍 Discovered {len(raw_topics)} forum topics for auto-detection.")
+            raw_topics = await discover_forum_topics(client, entity)
 
             for t in raw_topics:
+                thread_id = t["thread_id"]
+                topic_title = t["title"]
+
                 # Check if hidden or already covered manually
-                if t.id in hidden_topics or t.title in hidden_topics:
-                    logger.info(f"🙈 Skipping hidden topic: '{t.title}' (ID {t.id})")
+                if thread_id in hidden_topics or topic_title in hidden_topics:
+                    logger.info(f"🙈 Skipping hidden topic: '{topic_title}' (ID {thread_id})")
                     continue
-                if t.id in manually_covered_topics:
-                    logger.info(f"⏩ Topic '{t.title}' (ID {t.id}) already curated in catalog_config.json")
+                if thread_id in manually_covered_topics:
+                    logger.info(f"⏩ Topic '{topic_title}' (ID {thread_id}) already curated in catalog_config.json")
                     continue
 
-                thread_id = t.id
-                topic_title = t.title
-                logger.info(f"📂 Auto-scanning forum topic: '{topic_title}' (thread {thread_id})...")
+                logger.info(f"📂 Scanning topic: '{topic_title}' (thread {thread_id})...")
 
                 auto_sections, auto_count = await scan_chapter(client, {
                     "name": "General",
@@ -393,7 +439,7 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
                     total_lectures_count += auto_count
 
         except Exception as e:
-            logger.warning(f"Could not auto-scan forum topics: {e}")
+            logger.debug(f"Auto-scan forum topics note: {e}")
 
     # -------------------------------------------------------------
     # 4. Update In-Memory Cache and Pinned Summary in Forum Group
