@@ -388,8 +388,10 @@ If the background queue backlog exceeds 5 items, the Mini App displays a generic
 | Command | Who Can Use | Description |
 | :--- | :--- | :--- |
 | `/start` | Any Student | Initializes user DM pinned database message and presents the "Open Lecture Dashboard" Mini App button. |
-| `/rescan` | Bot Owner / Admin | Re-scans all topics in the Master Forum Group, re-indexes lectures, and updates the pinned `#LECTURE_MAP_STORAGE`. |
 | `/status` | Anyone | Displays real-time bot health, total indexed lectures, queue backlog, and worker count. |
+| `/admin` | Bot Owner (`ADMIN_ID`) | Displays Admin dashboard with total registered students, indexed courses, queue speed, and active workers. |
+| `/broadcast <text>` | Bot Owner (`ADMIN_ID`) | Broadcasts an announcement or forwarded media message to **all registered students**. |
+| `/rescan` | Bot Owner (`ADMIN_ID`) | Re-scans all topics in the Master Forum Group & `catalog_config.json`, and updates the pinned index. |
 
 
 ---

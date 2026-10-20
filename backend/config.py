@@ -39,6 +39,10 @@ ALL_BOT_TOKENS = [t for t in ALL_BOT_TOKENS if t]
 FORUM_CHAT_ID = int(os.getenv("FORUM_CHAT_ID", "0"))
 BACKUP_CHANNEL_ID = int(os.getenv("BACKUP_CHANNEL_ID", "0"))
 
+# --- Admin Identifier ---
+ADMIN_ID_RAW = os.getenv("ADMIN_ID", "0").strip()
+ADMIN_ID = int(ADMIN_ID_RAW) if (ADMIN_ID_RAW and ADMIN_ID_RAW.lstrip("-").isdigit()) else 0
+
 # --- Server Config ---
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))

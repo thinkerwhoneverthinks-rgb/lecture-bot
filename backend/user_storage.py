@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 from telethon import TelegramClient
@@ -11,6 +12,63 @@ from config import (
 
 # In-memory session cache for fast lookup during high concurrency
 USER_CACHE = {}
+
+# User Registry for broadcasts & statistics
+USERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "registered_users.json")
+REGISTERED_USERS = set()
+
+
+def load_registered_users():
+    global REGISTERED_USERS
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    REGISTERED_USERS = set(int(u) for u in data)
+        except Exception as e:
+            logger.warning(f"Could not load registered users from {USERS_FILE}: {e}")
+
+
+load_registered_users()
+
+
+def register_user(user_id: int):
+    global REGISTERED_USERS
+    if not user_id:
+        return
+    user_id = int(user_id)
+    if user_id not in REGISTERED_USERS:
+        REGISTERED_USERS.add(user_id)
+        try:
+            with open(USERS_FILE, "w", encoding="utf-8") as f:
+                json.dump(list(REGISTERED_USERS), f)
+        except Exception as e:
+            logger.warning(f"Could not save registered users to {USERS_FILE}: {e}")
+
+
+def get_all_registered_users() -> list:
+    global REGISTERED_USERS
+    return list(REGISTERED_USERS)
+
+
+async def sync_users_from_backup_channel(client: TelegramClient):
+    """Discovers and registers any users whose records exist in the private backup channel."""
+    if not BACKUP_CHANNEL_ID:
+        return
+    try:
+        count = 0
+        async for msg in client.iter_messages(BACKUP_CHANNEL_ID, limit=500):
+            if msg.message and "BACKUP::user_" in msg.message:
+                parts = msg.message.split("BACKUP::user_", 1)
+                if len(parts) > 1:
+                    raw_id = parts[1].split("::", 1)[0]
+                    if raw_id.isdigit():
+                        register_user(int(raw_id))
+                        count += 1
+        logger.info(f"👥 Synced {count} user(s) from private backup channel.")
+    except Exception as e:
+        logger.warning(f"Could not sync users from backup channel: {e}")
 
 
 def serialize_user_data(data: dict) -> str:
@@ -89,6 +147,7 @@ async def get_or_create_user_data(client: TelegramClient, user_id: int) -> dict:
     3. Recreates pinned message with recovered data + warning.
     4. If first-time user, initializes default database message and pins it.
     """
+    register_user(user_id)
     if user_id in USER_CACHE:
         return USER_CACHE[user_id]
 

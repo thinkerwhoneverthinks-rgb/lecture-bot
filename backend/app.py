@@ -11,6 +11,7 @@ from config import (
     WORKER_BOT_TOKENS,
     ALL_BOT_TOKENS,
     FORUM_CHAT_ID,
+    ADMIN_ID,
     HOST,
     PORT,
     WEBAPP_URL,
@@ -20,10 +21,13 @@ from config import (
 )
 from telethon.tl.functions.channels import GetParticipantRequest
 from telethon.errors import UserNotParticipantError
+from telethon import errors
 from scanner import scan_master_forum, LECTURE_MAP_CACHE
 from user_storage import (
     get_or_create_user_data,
-    save_user_data
+    save_user_data,
+    get_all_registered_users,
+    sync_users_from_backup_channel
 )
 from queue_manager import (
     add_forward_job,
@@ -291,10 +295,87 @@ def setup_bot_handlers(client: TelegramClient):
 
     @client.on(events.NewMessage(pattern=r'^/rescan'))
     async def rescan_handler(event):
-        # Admin command to rescan forum
+        if ADMIN_ID and event.sender_id != ADMIN_ID:
+            await event.respond("⛔ **Access Denied!** Only the bot Admin can use `/rescan`.")
+            return
+
         status_msg = await event.respond("🔄 Re-scanning master forum topics and lectures. Please wait...")
         await scan_master_forum(client)
         await status_msg.edit(f"✅ Scan complete! {LECTURE_MAP_CACHE['total_lectures']} lectures indexed across {len(LECTURE_MAP_CACHE['topics'])} topics.")
+
+    @client.on(events.NewMessage(pattern=r'^/admin'))
+    async def admin_handler(event):
+        if ADMIN_ID and event.sender_id != ADMIN_ID:
+            await event.respond("⛔ **Access Denied!** Only the bot Admin can access this menu.")
+            return
+
+        q = get_queue_status()
+        users = get_all_registered_users()
+        last_scanned = LECTURE_MAP_CACHE.get("last_scanned") or "Never"
+
+        text = (
+            "👑 **Admin Dashboard**\n\n"
+            f"👥 **Total Registered Students:** {len(users)}\n"
+            f"📚 **Indexed Topics:** {len(LECTURE_MAP_CACHE['topics'])}\n"
+            f"🎬 **Total Lectures:** {LECTURE_MAP_CACHE['total_lectures']}\n"
+            f"🕒 **Last Rescan:** {last_scanned}\n\n"
+            "⚡ **Queue Performance:**\n"
+            f"• Queue Backlog: {q['backlog_count']} jobs\n"
+            f"• Active Workers: {q['worker_count']}\n"
+            f"• Busy Mode Active: {'YES' if q['is_busy'] else 'NO'}\n\n"
+            "🛠️ **Admin Commands:**\n"
+            "• `/broadcast <text>` - Send announcement to all students\n"
+            "• `/rescan` - Re-index forum topics & catalog_config.json\n"
+            "• `/status` - Queue health & bot performance"
+        )
+        await event.respond(text)
+
+    @client.on(events.NewMessage(pattern=r'^/broadcast'))
+    async def broadcast_handler(event):
+        if ADMIN_ID and event.sender_id != ADMIN_ID:
+            await event.respond("⛔ **Access Denied!** Only the bot Admin can broadcast announcements.")
+            return
+
+        reply_msg = await event.get_reply_message()
+        broadcast_text = event.message.message[len('/broadcast'):].strip()
+
+        if not reply_msg and not broadcast_text:
+            await event.respond(
+                "ℹ️ **How to Use /broadcast:**\n\n"
+                "• Send: `/broadcast Your message here`\n"
+                "• OR reply to any photo/video/document with `/broadcast`"
+            )
+            return
+
+        users = get_all_registered_users()
+        if not users:
+            await event.respond("⚠️ No registered students found yet!")
+            return
+
+        status_msg = await event.respond(f"📢 Starting broadcast to {len(users)} student(s)...")
+
+        success_count = 0
+        blocked_count = 0
+
+        for uid in users:
+            try:
+                if reply_msg:
+                    await client.send_message(uid, reply_msg)
+                else:
+                    await client.send_message(uid, broadcast_text)
+                success_count += 1
+                await asyncio.sleep(0.05)
+            except (errors.UserIsBlockedError, errors.InputUserDeactivatedError):
+                blocked_count += 1
+            except Exception as e:
+                logger.debug(f"Broadcast failed for user {uid}: {e}")
+
+        await status_msg.edit(
+            "✅ **Broadcast Completed!**\n\n"
+            f"• 👥 Total targeted: {len(users)}\n"
+            f"• 📬 Successfully delivered: {success_count}\n"
+            f"• 🚫 Blocked / Inactive: {blocked_count}"
+        )
 
     @client.on(events.NewMessage(pattern=r'^/status'))
     async def status_handler(event):
@@ -329,6 +410,12 @@ async def init_telegram_clients():
     logger.info("🤖 Main Bot client successfully connected!")
 
     setup_bot_handlers(main_client)
+
+    # Sync past registered users from backup channel
+    try:
+        await sync_users_from_backup_channel(main_client)
+    except Exception as e:
+        logger.debug(f"User sync warning: {e}")
 
     # 2. Worker Clients (Optional for multi-token 90 msg/sec scaling)
     for idx, token in enumerate(WORKER_BOT_TOKENS, start=1):
