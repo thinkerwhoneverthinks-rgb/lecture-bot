@@ -1,6 +1,6 @@
 /**
  * Adsterra & Monetization Configuration
- * Easily configure your Adsterra ad scripts and auto-refresh intervals here.
+ * Live Monetization Units Configured with User Credentials
  */
 
 const ADS_CONFIG = {
@@ -10,26 +10,19 @@ const ADS_CONFIG = {
     // Adsterra 300x250 Banner settings
     banner_300x250: {
         enabled: true,
-        // Replace with your Adsterra direct banner script URL or key
-        // Example: "//www.highperformanceformat.com/YOUR_KEY_HERE/invoke.js"
-        script_url: "//www.highperformanceformat.com/example_banner_key/invoke.js",
+        key: "71582c8c44b686f2f87262a395bfd6e5",
+        script_url: "https://bauval.org/22/71582c8c44b686f2f87262a395bfd6e5",
         container_id: "adsterra-banner-container",
+        width: 300,
+        height: 250,
         // Auto-refresh interval in seconds during batch processing to register new impressions
-        refresh_interval_sec: 25
+        refresh_interval_sec: 30
     },
 
     // Adsterra Social Bar (In-page push notification widget - High CPM)
     social_bar: {
         enabled: true,
-        // Replace with your Adsterra Social Bar script URL
-        // Example: "//pl12345678.effectivegate.com/YOUR_SOCIAL_BAR_KEY.js"
-        script_url: "//pl12345678.effectivegate.com/example_socialbar_key.js"
-    },
-
-    // Smart Direct Link (Optional bonus link / sponsored action)
-    direct_link: {
-        enabled: false,
-        url: "https://www.profitablecpmrate.com/your_direct_link"
+        script_url: "https://bauval.org/14/c722572355e692dadb25a8321535b206"
     }
 };
 
@@ -46,62 +39,107 @@ class AdManager {
     init() {
         if (!this.config.enabled) return;
 
-        // 1. Load Social Bar if configured
-        if (this.config.social_bar.enabled && this.config.social_bar.script_url) {
-            this.loadScript(this.config.social_bar.script_url, 'adsterra-socialbar-script');
+        // 1. Inject Social Bar Script into page head
+        if (this.config.social_bar?.enabled && this.config.social_bar?.script_url) {
+            this.loadSocialBar(this.config.social_bar.script_url);
         }
 
-        // 2. Initial Banner Load
+        // 2. Initial 300x250 Banner Render
         this.renderBanner();
     }
 
+    loadSocialBar(url) {
+        if (document.getElementById('adsterra-socialbar-script')) return;
+        try {
+            const script = document.createElement('script');
+            script.id = 'adsterra-socialbar-script';
+            script.setAttribute('data-cfasync', 'false');
+            script.src = url;
+            script.async = true;
+            document.head.appendChild(script);
+            console.log('[AdManager] Injected Social Bar script');
+        } catch (e) {
+            console.warn('[AdManager] Error loading Social Bar:', e);
+        }
+    }
+
     renderBanner() {
-        if (!this.config.enabled || !this.config.banner_300x250.enabled) return;
+        if (!this.config.enabled || !this.config.banner_300x250?.enabled) return;
 
         const container = document.getElementById(this.config.banner_300x250.container_id);
         if (!container) return;
 
+        const key = this.config.banner_300x250.key;
+        const scriptUrl = this.config.banner_300x250.script_url;
+        const width = this.config.banner_300x250.width || 300;
+        const height = this.config.banner_300x250.height || 250;
+
         // Clear existing ad container content safely
         container.innerHTML = '';
 
-        // Create fresh ad wrapper iframe or script element
-        const adWrapper = document.createElement('div');
-        adWrapper.className = 'ad-rendered-slot';
+        // Render via an isolated iframe to prevent script interference and allow clean refreshing
+        const iframe = document.createElement('iframe');
+        iframe.width = width;
+        iframe.height = height;
+        iframe.frameBorder = '0';
+        iframe.scrolling = 'no';
+        iframe.style.border = 'none';
+        iframe.style.overflow = 'hidden';
+        iframe.style.borderRadius = '8px';
+        iframe.style.maxWidth = '100%';
 
-        // Check if demo/placeholder mode vs live script
-        if (this.config.banner_300x250.script_url.includes('example_banner_key')) {
-            // Discreet placeholder without revealing partner or network name
-            adWrapper.innerHTML = `
-                <div class="ad-preview-box">
-                    <div class="ad-preview-badge">📢 ADVERTISEMENT</div>
-                    <div class="ad-preview-text">Sponsored Content</div>
-                </div>
-            `;
-        } else {
-            // Live Adsterra Script Injection
-            const script = document.createElement('script');
-            script.type = 'text/javascript';
-            script.src = this.config.banner_300x250.script_url;
-            script.async = true;
-            adWrapper.appendChild(script);
-        }
+        const iframeHtml = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    html, body {
+                        margin: 0;
+                        padding: 0;
+                        width: ${width}px;
+                        height: ${height}px;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        background: transparent;
+                        overflow: hidden;
+                    }
+                </style>
+            </head>
+            <body>
+                <script type="text/javascript">
+                    atOptions = {
+                        'key' : '${key}',
+                        'format' : 'iframe',
+                        'height' : ${height},
+                        'width' : ${width},
+                        'params' : {}
+                    };
+                </script>
+                <script type="text/javascript" src="${scriptUrl}"></script>
+            </body>
+            </html>
+        `;
 
-        container.appendChild(adWrapper);
+        iframe.srcdoc = iframeHtml;
+        container.appendChild(iframe);
+
         this.adViewCount++;
-        console.log(`[AdManager] Rendered ad view #${this.adViewCount}`);
+        console.log(`[AdManager] Rendered 300x250 banner view #${this.adViewCount}`);
     }
 
     startBatchRefreshCycle() {
-        if (!this.config.enabled || !this.config.banner_300x250.enabled) return;
+        if (!this.config.enabled || !this.config.banner_300x250?.enabled) return;
         this.stopBatchRefreshCycle();
 
-        // Refresh ad on batch start
+        // Refresh banner on batch start to capture student impression
         this.renderBanner();
 
-        // Cycle ad every N seconds to capture fresh impressions while user waits for batch
-        const intervalMs = (this.config.banner_300x250.refresh_interval_sec || 25) * 1000;
+        // Cycle ad banner periodically while student waits for batch upload
+        const intervalMs = (this.config.banner_300x250.refresh_interval_sec || 30) * 1000;
         this.refreshTimer = setInterval(() => {
-            console.log('[AdManager] Refreshing ad for new impression view...');
+            console.log('[AdManager] Refreshing banner impression cycle...');
             this.renderBanner();
         }, intervalMs);
     }
@@ -111,16 +149,6 @@ class AdManager {
             clearInterval(this.refreshTimer);
             this.refreshTimer = null;
         }
-    }
-
-    loadScript(url, id) {
-        if (document.getElementById(id)) return;
-        const script = document.createElement('script');
-        script.id = id;
-        script.type = 'text/javascript';
-        script.src = url;
-        script.async = true;
-        document.body.appendChild(script);
     }
 }
 
