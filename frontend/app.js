@@ -131,6 +131,9 @@ const tg = window.Telegram?.WebApp;
 if (tg) {
     tg.ready();
     tg.expand();
+    if (tg.enableClosingConfirmation) {
+        tg.enableClosingConfirmation();
+    }
     applyTheme(currentTheme);
 }
 
@@ -146,9 +149,101 @@ let userData = {
     completed_batches: [],
     sent_lectures: [],
     custom_group: null,
+    custom_group_title: null,
     custom_topic: null,
     custom_bot_token: null
 };
+
+// =================================================================
+// NAVIGATION STACK & BACK BUTTON ENGINE
+// (Telegram WebApp Native BackButton + Android PopState Bridge)
+// =================================================================
+const navStack = [];
+let isPoppingHistory = false;
+
+function updateBackButtonVisibility() {
+    if (tg?.BackButton) {
+        if (navStack.length > 0) {
+            tg.BackButton.show();
+        } else {
+            tg.BackButton.hide();
+        }
+    }
+}
+
+function pushNavState(viewId, closeCallback) {
+    if (navStack.some(item => item.id === viewId)) return;
+
+    navStack.push({ id: viewId, close: closeCallback });
+    updateBackButtonVisibility();
+
+    try {
+        window.history.pushState({ modalView: viewId, timestamp: Date.now() }, '');
+    } catch (e) {
+        console.warn('history.pushState unavailable:', e);
+    }
+}
+
+function popNavState(viewId, shouldPopBrowserHistory = true) {
+    const idx = navStack.findIndex(item => item.id === viewId);
+    if (idx !== -1) {
+        navStack.splice(idx, 1);
+        updateBackButtonVisibility();
+    }
+
+    if (shouldPopBrowserHistory && window.history.state?.modalView === viewId && !isPoppingHistory) {
+        try {
+            isPoppingHistory = true;
+            window.history.back();
+            setTimeout(() => { isPoppingHistory = false; }, 120);
+        } catch (e) {
+            isPoppingHistory = false;
+        }
+    }
+}
+
+function handleBackButtonPress() {
+    if (navStack.length > 0) {
+        const topItem = navStack.pop();
+        updateBackButtonVisibility();
+        if (topItem && typeof topItem.close === 'function') {
+            topItem.close(false); // pass false to prevent double popHistory
+        }
+        return true;
+    }
+    return false;
+}
+
+// Telegram Native Back Button Handler (top header arrow & Android back button intercept)
+if (tg?.BackButton) {
+    tg.BackButton.onClick(() => {
+        const handled = handleBackButtonPress();
+        if (handled && window.history.state?.modalView && !isPoppingHistory) {
+            try {
+                isPoppingHistory = true;
+                window.history.back();
+                setTimeout(() => { isPoppingHistory = false; }, 120);
+            } catch (e) {
+                isPoppingHistory = false;
+            }
+        }
+    });
+}
+
+// Android Hardware / Gesture Back Button via popstate
+window.addEventListener('popstate', (e) => {
+    if (isPoppingHistory) {
+        isPoppingHistory = false;
+        return;
+    }
+    if (navStack.length > 0) {
+        const topItem = navStack.pop();
+        updateBackButtonVisibility();
+        if (topItem && typeof topItem.close === 'function') {
+            topItem.close(false);
+        }
+    }
+});
 
 // Active Batch Queue State
 let activeBatch = null;
@@ -265,6 +360,16 @@ function setupEventListeners() {
         if (e.target === settingsModal) closeSettingsModal();
     });
 
+    // In-modal Back Arrow Buttons
+    const modalBackArrowBtn = document.getElementById('modal-back-arrow-btn');
+    if (modalBackArrowBtn) {
+        modalBackArrowBtn.addEventListener('click', closeSettingsModal);
+    }
+    const adminModalBackArrowBtn = document.getElementById('admin-modal-back-arrow-btn');
+    if (adminModalBackArrowBtn) {
+        adminModalBackArrowBtn.addEventListener('click', closeAdminModal);
+    }
+
     // Force Subscribe Verify Button
     if (btnFsubVerify) {
         btnFsubVerify.addEventListener('click', async () => {
@@ -290,15 +395,20 @@ function setupEventListeners() {
     if (inputGroup) {
         inputGroup.addEventListener('input', () => {
             const val = inputGroup.value.trim();
-            // Match public topic: /<username>/<topic_id>/<msg_id>
+            // Match public topic with message: /<username>/<topic_id>/<msg_id>
             const mPublic = val.match(/t\.me\/[a-zA-Z0-9_]+\/(\d+)\/(\d+)/);
             if (mPublic && mPublic[1]) {
                 inputTopic.value = mPublic[1];
             }
-            // Match private topic: /c/<channel_id>/<topic_id>/<msg_id>
+            // Match private topic with message: /c/<channel_id>/<topic_id>/<msg_id>
             const mPrivate = val.match(/t\.me\/c\/\d+\/(\d+)\/(\d+)/);
             if (mPrivate && mPrivate[1]) {
                 inputTopic.value = mPrivate[1];
+            }
+            // Match private topic link without msg_id: /c/<channel_id>/<topic_id>
+            const mTopicOnly = val.match(/t\.me\/c\/\d+\/(\d+)$/);
+            if (mTopicOnly && mTopicOnly[1]) {
+                inputTopic.value = mTopicOnly[1];
             }
         });
     }
@@ -482,7 +592,10 @@ async function checkForceSubscribe() {
 function updateDestinationUI() {
     if (userData.custom_group) {
         const topicSuffix = userData.custom_topic ? ` (Topic ${userData.custom_topic})` : '';
-        destDisplayName.textContent = `${userData.custom_group}${topicSuffix}`;
+        const groupLabel = userData.custom_group_title 
+            ? `${userData.custom_group_title} (${userData.custom_group})` 
+            : userData.custom_group;
+        destDisplayName.textContent = `${groupLabel}${topicSuffix}`;
         inputGroup.value = userData.custom_group;
     } else {
         destDisplayName.textContent = 'Bot PM (Default)';
@@ -842,10 +955,16 @@ function openSettingsModal() {
         destVerifyStatus.className = 'verify-status-box';
     }
     settingsModal.classList.add('active');
+    pushNavState('settings', closeSettingsModalInternal);
+}
+
+function closeSettingsModalInternal(shouldPopBrowserHistory = true) {
+    settingsModal.classList.remove('active');
+    popNavState('settings', shouldPopBrowserHistory);
 }
 
 function closeSettingsModal() {
-    settingsModal.classList.remove('active');
+    closeSettingsModalInternal(true);
 }
 
 async function handleVerifyDestination() {
@@ -872,14 +991,21 @@ async function handleVerifyDestination() {
             body: JSON.stringify({
                 user_id: USER_ID,
                 destination: rawDest,
-                topic_id: manualTopic || null
+                destination_input: rawDest,
+                custom_group: rawDest,
+                topic_id: manualTopic || null,
+                custom_topic: manualTopic || null
             })
         });
 
         const data = await res.json();
         if (data.valid) {
             destVerifyStatus.className = 'verify-status-box success';
-            destVerifyStatus.innerHTML = data.message || `✅ Bot is Admin in <strong>${escapeHtml(data.chat_title || rawDest)}</strong>!`;
+            if (data.is_pm) {
+                destVerifyStatus.innerHTML = '🤖 <strong>Bot PM (Default)</strong>: All lectures will be delivered directly to your private chat with the bot. No admin setup needed!';
+            } else {
+                destVerifyStatus.innerHTML = data.message || `✅ Bot is Admin in <strong>${escapeHtml(data.chat_title || rawDest)}</strong>!`;
+            }
             if (data.topic_id && !inputTopic.value) {
                 inputTopic.value = data.topic_id;
             }
@@ -910,7 +1036,10 @@ async function handleSaveSettings(e) {
             body: JSON.stringify({
                 user_id: USER_ID,
                 custom_group: customGroup,
+                destination: customGroup,
+                destination_input: customGroup,
                 custom_topic: customTopic,
+                topic_id: customTopic,
                 custom_bot_token: customBotToken
             })
         });
@@ -920,7 +1049,8 @@ async function handleSaveSettings(e) {
             userData = data.data;
             updateDestinationUI();
             closeSettingsModal();
-            const destName = userData.custom_group ? `${userData.custom_group}${userData.custom_topic ? ` (Topic ${userData.custom_topic})` : ''}` : 'Bot PM (Default)';
+            const groupName = userData.custom_group_title || userData.custom_group;
+            const destName = userData.custom_group ? `${groupName}${userData.custom_topic ? ` (Topic ${userData.custom_topic})` : ''}` : 'Bot PM (Default)';
             alert(`✅ Destination successfully set to: ${destName}`);
         } else {
             alert('Failed to save settings. Please try again.');
@@ -1014,10 +1144,16 @@ function openAdminModal() {
     if (!isAdmin || !adminModal) return;
     adminModal.classList.add('active');
     loadAdminData();
+    pushNavState('admin', closeAdminModalInternal);
+}
+
+function closeAdminModalInternal(shouldPopBrowserHistory = true) {
+    if (adminModal) adminModal.classList.remove('active');
+    popNavState('admin', shouldPopBrowserHistory);
 }
 
 function closeAdminModal() {
-    if (adminModal) adminModal.classList.remove('active');
+    closeAdminModalInternal(true);
 }
 
 async function loadAdminData() {

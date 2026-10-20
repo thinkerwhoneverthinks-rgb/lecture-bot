@@ -125,20 +125,23 @@ def parse_telegram_destination(raw_input: str):
     # Pattern 1: Private channel/group with topic: t.me/c/<channel_id>/<topic_id>/<msg_id>
     m = re.search(r"t\.me\/c\/(\d+)\/(\d+)\/(\d+)", s)
     if m:
-        channel_id = int(f"-100{m.group(1)}")
+        cid_str = m.group(1)
+        channel_id = int(f"-{cid_str}") if (cid_str.startswith("100") and len(cid_str) > 12) else int(f"-100{cid_str}")
         topic_id = int(m.group(2))
         return channel_id, topic_id
 
-    # Pattern 2: Private channel/group message: t.me/c/<channel_id>/<msg_id>
+    # Pattern 2: Private channel/group message or topic: t.me/c/<channel_id>/<msg_id_or_topic>
     m = re.search(r"t\.me\/c\/(\d+)\/(\d+)", s)
     if m:
-        channel_id = int(f"-100{m.group(1)}")
+        cid_str = m.group(1)
+        channel_id = int(f"-{cid_str}") if (cid_str.startswith("100") and len(cid_str) > 12) else int(f"-100{cid_str}")
         return channel_id, None
 
     # Pattern 3: Private channel base link: t.me/c/<channel_id>
     m = re.search(r"t\.me\/c\/(\d+)", s)
     if m:
-        channel_id = int(f"-100{m.group(1)}")
+        cid_str = m.group(1)
+        channel_id = int(f"-{cid_str}") if (cid_str.startswith("100") and len(cid_str) > 12) else int(f"-100{cid_str}")
         return channel_id, None
 
     # Pattern 4: Public group with topic: t.me/<username>/<topic_id>/<msg_id>
@@ -187,11 +190,12 @@ async def api_verify_destination(request):
         return web.json_response({"valid": False, "error": "Invalid request body"}, status=400)
 
     user_id = body.get("user_id")
-    raw_input = body.get("destination_input")
-    manual_topic = body.get("topic_id")
+    # Accept both destination_input, destination, and custom_group from client
+    raw_input = body.get("destination_input") or body.get("destination") or body.get("custom_group")
+    manual_topic = body.get("topic_id") or body.get("custom_topic")
 
-    # If empty, destination is PM
-    if not raw_input or str(raw_input).strip().lower() in ("", "none", "null", "pm", "me"):
+    # If empty or explicit PM keywords, destination is user PM
+    if not raw_input or str(raw_input).strip().lower() in ("", "none", "null", "pm", "me", "direct"):
         return web.json_response({
             "valid": True,
             "is_pm": True,
@@ -203,26 +207,51 @@ async def api_verify_destination(request):
 
     parsed_chat, parsed_topic = parse_telegram_destination(raw_input)
     final_chat = parsed_chat if parsed_chat is not None else raw_input
-    final_topic = parsed_topic
-    if manual_topic and str(manual_topic).strip().isdigit() and not final_topic:
-        final_topic = int(manual_topic)
+
+    # Priority for topic: explicit manual_topic if provided by user, else auto-parsed topic from URL
+    final_topic = None
+    if manual_topic is not None and str(manual_topic).strip().isdigit():
+        final_topic = int(str(manual_topic).strip())
+    elif parsed_topic is not None:
+        final_topic = parsed_topic
 
     if not main_client:
         return web.json_response({"valid": False, "error": "Bot client not initialized"}, status=503)
 
     try:
-        entity = await main_client.get_entity(final_chat)
+        target_chat = final_chat
+        if isinstance(target_chat, str) and (target_chat.startswith("-100") or target_chat.lstrip("-").isdigit()):
+            try:
+                target_chat = int(target_chat)
+            except ValueError:
+                pass
+
+        # Fetch entity with fallback to get_dialogs cache refresh
+        try:
+            entity = await main_client.get_entity(target_chat)
+        except Exception as e_first:
+            logger.warning(f"First get_entity attempt failed for {target_chat}: {e_first}. Refreshing dialogs cache...")
+            try:
+                await main_client.get_dialogs(limit=100)
+                entity = await main_client.get_entity(target_chat)
+            except Exception:
+                raise e_first
+
         chat_title = getattr(entity, 'title', None) or getattr(entity, 'username', None) or str(final_chat)
 
         # Check bot permissions in target channel/group
+        is_admin = False
+        can_post = False
         try:
             perms = await main_client.get_permissions(entity, 'me')
-            is_admin = getattr(perms, 'is_admin', False)
-            can_post = getattr(perms, 'post_messages', False) or getattr(perms, 'send_messages', False)
+            is_admin = getattr(perms, 'is_admin', False) or getattr(perms, 'is_creator', False)
+            can_post = getattr(perms, 'post_messages', False) or getattr(perms, 'send_messages', False) or is_admin
         except Exception as pe:
             logger.debug(f"Permissions probe note: {pe}")
-            is_admin = False
-            can_post = False
+            admin_rights = getattr(entity, 'admin_rights', None)
+            if admin_rights:
+                is_admin = True
+                can_post = bool(getattr(admin_rights, 'post_messages', False) or getattr(admin_rights, 'send_messages', False))
 
         if not is_admin and not can_post:
             return web.json_response({
@@ -246,10 +275,11 @@ async def api_verify_destination(request):
 
     except Exception as e:
         err_msg = str(e)
+        logger.error(f"api_verify_destination error for {raw_input}: {err_msg}", exc_info=True)
         if "Cannot find any entity" in err_msg or "Could not find the input entity" in err_msg:
             return web.json_response({
                 "valid": False,
-                "error": "❌ Bot is not in this channel/group! Please add the bot as an Admin first."
+                "error": "❌ Bot cannot access this channel/group! Make sure you: 1. Added the bot as Admin to the channel. 2. Sent a message in the channel."
             }, headers={"Access-Control-Allow-Origin": "*"})
         return web.json_response({
             "valid": False,
@@ -268,8 +298,8 @@ async def api_save_settings(request):
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
     user_id = body.get("user_id")
-    raw_group = body.get("custom_group")
-    raw_topic = body.get("custom_topic")
+    raw_group = body.get("custom_group") or body.get("destination") or body.get("destination_input")
+    raw_topic = body.get("custom_topic") or body.get("topic_id")
     custom_bot_token = body.get("custom_bot_token")
 
     if not user_id:
@@ -282,24 +312,33 @@ async def api_save_settings(request):
     parsed_chat, parsed_topic = parse_telegram_destination(raw_group)
     if parsed_chat is not None:
         data["custom_group"] = str(parsed_chat)
-        if parsed_topic is not None:
-            data["custom_topic"] = parsed_topic
-        elif raw_topic and str(raw_topic).strip().isdigit():
-            data["custom_topic"] = int(raw_topic)
-        else:
-            data["custom_topic"] = None
+    elif raw_group and str(raw_group).strip().lower() not in ("none", "null", "pm", "me", ""):
+        data["custom_group"] = str(raw_group).strip()
     else:
-        if raw_group and str(raw_group).strip().lower() not in ("none", "null", "pm", "me", ""):
-            data["custom_group"] = str(raw_group).strip()
-        else:
-            data["custom_group"] = None
+        data["custom_group"] = None
 
-        if raw_topic and str(raw_topic).strip().isdigit():
-            data["custom_topic"] = int(raw_topic)
-        else:
-            data["custom_topic"] = None
+    if raw_topic is not None and str(raw_topic).strip() != "" and str(raw_topic).strip().isdigit():
+        data["custom_topic"] = int(str(raw_topic).strip())
+    elif parsed_topic is not None:
+        data["custom_topic"] = parsed_topic
+    else:
+        data["custom_topic"] = None
 
     data["custom_bot_token"] = custom_bot_token
+
+    # Resolve friendly title if destination is set and main_client is connected
+    chat_title = None
+    if data.get("custom_group") and main_client:
+        try:
+            target_chat = data["custom_group"]
+            if str(target_chat).startswith("-100") or str(target_chat).lstrip("-").isdigit():
+                target_chat = int(target_chat)
+            entity = await main_client.get_entity(target_chat)
+            chat_title = getattr(entity, 'title', None) or getattr(entity, 'username', None)
+        except Exception:
+            pass
+
+    data["custom_group_title"] = chat_title
 
     saved = await save_user_data(main_client, user_id, data)
     return web.json_response({"success": saved, "data": data}, headers={"Access-Control-Allow-Origin": "*"})

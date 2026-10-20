@@ -108,8 +108,11 @@
     <div class="modal-overlay" id="settings-modal">
         <div class="modal-card">
             <div class="modal-header">
-                <h3 class="modal-title">⚙️ Destination Settings</h3>
-                <button class="modal-close-btn" id="modal-close-btn">×</button>
+                <div class="modal-header-left">
+                    <button type="button" class="modal-back-arrow-btn" id="modal-back-arrow-btn" title="Back">‹</button>
+                    <h3 class="modal-title">⚙️ Destination Settings</h3>
+                </div>
+                <button type="button" class="modal-close-btn" id="modal-close-btn" title="Close">×</button>
             </div>
 
             <!-- 4-Step Instructions -->
@@ -194,14 +197,17 @@
     <div class="modal-overlay" id="admin-modal">
         <div class="modal-card modal-admin-card">
             <div class="modal-header">
-                <div class="admin-modal-title-wrap">
-                    <span class="admin-crown-icon">👑</span>
-                    <div>
-                        <h3 class="modal-title">Admin Command Center</h3>
-                        <p class="admin-modal-sub" id="admin-id-badge">Verified Administrator</p>
+                <div class="modal-header-left">
+                    <button type="button" class="modal-back-arrow-btn" id="admin-modal-back-arrow-btn" title="Back">‹</button>
+                    <div class="admin-modal-title-wrap">
+                        <span class="admin-crown-icon">👑</span>
+                        <div>
+                            <h3 class="modal-title">Admin Command Center</h3>
+                            <p class="admin-modal-sub" id="admin-id-badge">Verified Administrator</p>
+                        </div>
                     </div>
                 </div>
-                <button class="modal-close-btn" id="admin-modal-close-btn">×</button>
+                <button type="button" class="modal-close-btn" id="admin-modal-close-btn" title="Close">×</button>
             </div>
 
             <!-- Tab Navigation Bar -->

@@ -703,17 +703,59 @@ body {
     margin-bottom: 16px;
 }
 
-.modal-title {
-    font-size: 16px;
+.modal-header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.modal-back-arrow-btn {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
     font-weight: 700;
+    cursor: pointer;
+    line-height: 1;
+    transition: all 0.2s ease;
+    padding: 0;
+    padding-bottom: 2px;
+    user-select: none;
+}
+
+.modal-back-arrow-btn:hover,
+.modal-back-arrow-btn:active {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: var(--accent-cyan);
+    color: #fff;
+    transform: scale(0.96);
 }
 
 .modal-close-btn {
-    background: none;
-    border: none;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid transparent;
     color: var(--text-muted);
     font-size: 20px;
     cursor: pointer;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.modal-close-btn:hover,
+.modal-close-btn:active {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
 }
 
 .form-group {

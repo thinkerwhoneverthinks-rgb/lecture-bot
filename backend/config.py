@@ -57,6 +57,7 @@ DEFAULT_USER_DATA = {
     "completed_batches": [],
     "sent_lectures": [],
     "custom_group": None,
+    "custom_group_title": None,
     "custom_topic": None,
     "custom_bot_token": None
 }
