@@ -460,11 +460,10 @@ async def api_complete_batch(request):
         completed.append(batch_key)
         await save_user_data(main_client, user_id, data)
 
-    # Trigger delivery routing:
-    # If Group delivery: Videos went to group -> sends completion notice + AdsGram ad to PM (0 ads in group)
-    # If PM delivery: Videos went to PM -> sends AdsGram ad at bottom of batch in PM
     custom_group = data.get("custom_group")
     batch_title = f"{topic_title} - {batch_label}" if (topic_title and batch_label) else (batch_label or topic_title)
+    logger.info(f"🏁 Batch complete received: user_id={user_id}, batch='{batch_key}', custom_group='{custom_group}'")
+
     if main_client:
         asyncio.create_task(handle_batch_completion_delivery(
             client=main_client,
@@ -472,6 +471,8 @@ async def api_complete_batch(request):
             custom_group=custom_group,
             batch_title=batch_title
         ))
+    else:
+        logger.error("❌ main_client is None when processing api_complete_batch!")
 
     return web.json_response({"success": True, "completed_batches": completed}, headers={"Access-Control-Allow-Origin": "*"})
 

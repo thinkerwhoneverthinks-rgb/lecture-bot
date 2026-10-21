@@ -15,11 +15,22 @@ async def fetch_and_send_adsgram_ad(client, user_id: int) -> bool:
 
     if not ADSGRAM_TOKEN:
         logger.warning(
-            "⚠️ [AdsGram] ADSGRAM_TOKEN is missing in .env! "
-            "AdsGram strictly requires your account token to serve ads. "
-            "Go to AdsGram Dashboard -> Profile (top right) -> Copy Account Token, and add ADSGRAM_TOKEN=... to your .env"
+            "⚠️ [AdsGram] ADSGRAM_TOKEN is not configured in .env / Render Environment Variables!\n"
+            "AdsGram strictly requires your account token to fetch bot ads.\n"
+            "To get it: AdsGram Dashboard -> Click Profile (top-right avatar) -> Copy Account Token -> Add ADSGRAM_TOKEN=... in Render."
         )
-        return False
+        # Deliver a clean sponsor notice so user verifies PM delivery routing works immediately
+        fallback_text = (
+            "📢 <b>Sponsored</b>\n\n"
+            "🌟 <i>Study smarter! Find more high-yield lectures and notes in our updates channel.</i>"
+        )
+        try:
+            await client.send_message(user_id, fallback_text, parse_mode='html')
+            logger.info(f"📢 Delivered sponsor post to user {user_id} PM (awaiting ADSGRAM_TOKEN setup).")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to send sponsor post to user {user_id}: {e}")
+            return False
 
     clean_block_id = ADSGRAM_BLOCK_ID.strip().replace("bot-", "").replace("block-", "")
 
@@ -46,6 +57,7 @@ async def fetch_and_send_adsgram_ad(client, user_id: int) -> bool:
 
                 data = await resp.json()
                 if not data:
+                    logger.info(f"[AdsGram] Empty ad response from AdsGram for user {user_id}.")
                     return False
 
                 # Support both { result: { ... } } and direct { text_html: ... } schemas
@@ -94,7 +106,7 @@ async def fetch_and_send_adsgram_ad(client, user_id: int) -> bool:
                 return True
 
     except Exception as e:
-        logger.warning(f"⚠️ [AdsGram] Could not deliver ad to user {user_id}: {e}")
+        logger.error(f"❌ [AdsGram] Could not deliver ad to user {user_id}: {e}")
         return False
 
 
@@ -105,6 +117,8 @@ async def handle_batch_completion_delivery(client, user_id: int, custom_group: s
       NEVER sends ads to the study group!
     - PM Delivery: Lectures went to PM. Sends completion confirmation + AdsGram Ad to user PM at bottom of batch.
     """
+    logger.info(f"📬 Executing completion delivery routing for user_id={user_id} (destination group={custom_group})...")
+
     is_group_delivery = bool(
         custom_group and str(custom_group).lower() not in ("none", "null", "pm", "me", "") and
         (str(custom_group).startswith("-100") or str(custom_group).lstrip("-").isdigit() or str(custom_group).startswith("@"))
@@ -113,6 +127,7 @@ async def handle_batch_completion_delivery(client, user_id: int, custom_group: s
     batch_name_clean = batch_title or "your lectures"
 
     if is_group_delivery:
+        # Group Delivery:
         # 1. Send clean notification to personal Bot PM
         notification_text = (
             f"🎉 <b>Batch Delivery Complete!</b>\n\n"
@@ -121,8 +136,9 @@ async def handle_batch_completion_delivery(client, user_id: int, custom_group: s
         )
         try:
             await client.send_message(user_id, notification_text, parse_mode='html')
+            logger.info(f"✅ Sent group delivery completion notice to user {user_id} PM.")
         except Exception as e:
-            logger.debug(f"Could not send PM completion notification to user {user_id}: {e}")
+            logger.error(f"❌ Failed to send PM completion notification to user {user_id}: {e}")
 
         # 2. Send AdsGram Sponsored Post to personal Bot PM
         await fetch_and_send_adsgram_ad(client, user_id)
@@ -136,8 +152,9 @@ async def handle_batch_completion_delivery(client, user_id: int, custom_group: s
         )
         try:
             await client.send_message(user_id, completion_text, parse_mode='html')
+            logger.info(f"✅ Sent PM delivery completion notice to user {user_id} PM.")
         except Exception as e:
-            logger.debug(f"Could not send PM completion confirmation to user {user_id}: {e}")
+            logger.error(f"❌ Failed to send PM completion confirmation to user {user_id}: {e}")
 
         # 2. Append AdsGram Sponsored Post at the bottom of the batch in user PM
         await fetch_and_send_adsgram_ad(client, user_id)
