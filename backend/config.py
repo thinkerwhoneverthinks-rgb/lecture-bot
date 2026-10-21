@@ -73,3 +73,9 @@ RATE_LIMIT_PER_CHAT_MAX_RPM = 20 # Telegram strict per-chat limit (20 messages/m
 FORCE_SUB_CHANNEL = os.getenv("FORCE_SUB_CHANNEL", "").strip()
 FORCE_SUB_INVITE_LINK = os.getenv("FORCE_SUB_INVITE_LINK", "").strip()
 
+# --- AdsGram Bot PM Monetization ---
+ADSGRAM_BLOCK_ID = os.getenv("ADSGRAM_BLOCK_ID", "55331").strip()
+ADSGRAM_TOKEN = os.getenv("ADSGRAM_TOKEN", "").strip()
+
+
+

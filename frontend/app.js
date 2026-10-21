@@ -9,8 +9,19 @@
     'use strict';
 
     // 1. Telegram-Only Access Lock
-    // Checks if running inside Telegram Mini App environment
-    const isTelegram = !!(window.Telegram?.WebApp?.initData);
+    // Robust detection: checks for Telegram Webview Proxy (Android), iOS WebKit hook,
+    // platform identifier, hash parameters, or cached SDK params.
+    const tgApp = window.Telegram?.WebApp;
+    const isTelegram = Boolean(
+        window.TelegramWebviewProxy ||                           // Native Telegram Android WebView hook
+        window.webkit?.messageHandlers?.webApp ||                // Native Telegram iOS WebView hook
+        (tgApp?.platform && tgApp.platform !== 'unknown') ||    // Valid Telegram client platform (android, ios, tdesktop, etc.)
+        tgApp?.initData ||                                       // Valid non-empty initData string
+        location.hash.includes('tgWebAppData') ||               // URL fragment containing WebApp data
+        location.hash.includes('tgWebAppPlatform') ||           // URL fragment containing Telegram platform
+        location.hash.includes('tgWebAppVersion') ||            // URL fragment containing Telegram version
+        sessionStorage.getItem('__telegram__initParams')        // Telegram SDK cached initParams
+    );
     if (!isTelegram) {
         const renderBlock = () => {
             document.body.innerHTML = `
@@ -137,8 +148,17 @@ if (tg) {
     applyTheme(currentTheme);
 }
 
-// User Identification (falls back to demo ID when viewed outside Telegram)
-const USER_ID = tg?.initDataUnsafe?.user?.id || 123456789;
+// User Identification (persists user ID in localStorage to survive refreshes)
+let resolvedUserId = tg?.initDataUnsafe?.user?.id;
+if (resolvedUserId) {
+    try { localStorage.setItem('cached_telegram_user_id', String(resolvedUserId)); } catch (_) {}
+} else {
+    try {
+        const cached = localStorage.getItem('cached_telegram_user_id');
+        if (cached) resolvedUserId = parseInt(cached, 10);
+    } catch (_) {}
+}
+const USER_ID = resolvedUserId || 123456789;
 
 // API Base URL (auto-detects current host origin)
 const API_BASE = window.location.origin;
@@ -319,11 +339,6 @@ let adminCachedData = null;
 // =================================================================
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // Initialize Adsterra ads
-    if (window.adManager) {
-        window.adManager.init();
-    }
-
     // Setup event listeners
     setupEventListeners();
 
@@ -658,11 +673,6 @@ async function startBatchForward(topicTitle, sectionName, batchLabel, lectures) 
     speedStatusPill.textContent = 'Sending...';
     speedStatusPill.className = 'status-pill status-active';
 
-    // Start Adsterra ad auto-refresh cycle for new impressions
-    if (window.adManager) {
-        window.adManager.startBatchRefreshCycle();
-    }
-
     // Process lectures in batch sequentially
     processNextLectureInBatch();
 }
@@ -744,11 +754,6 @@ async function completeCurrentBatch() {
     uploadSpeedVal.textContent = '0.00 MB/s';
     currentLectureName.textContent = 'Batch delivered successfully!';
 
-    // Stop ad cycler
-    if (window.adManager) {
-        window.adManager.stopBatchRefreshCycle();
-    }
-
     // Save batch completion in user's pinned DB
     if (activeBatch) {
         userData.completed_batches.push(activeBatch.key);
@@ -758,7 +763,9 @@ async function completeCurrentBatch() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     user_id: USER_ID,
-                    batch_key: activeBatch.key
+                    batch_key: activeBatch.key,
+                    batch_label: activeBatch.batchLabel,
+                    topic_title: activeBatch.topicTitle
                 })
             });
         } catch (e) {}

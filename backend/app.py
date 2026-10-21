@@ -41,6 +41,7 @@ from queue_manager import (
     start_queue_workers,
     get_queue_status
 )
+from adsgram import handle_batch_completion_delivery
 
 all_clients = []
 main_client = None
@@ -437,7 +438,7 @@ async def api_check_fsub(request):
 
 
 async def api_complete_batch(request):
-    """Saves a batch identifier to the user's completed_batches in their pinned DB."""
+    """Saves a batch identifier to the user's completed_batches in their pinned DB and triggers PM delivery routing + AdsGram sponsored post."""
     try:
         body = await request.json()
     except Exception:
@@ -445,6 +446,8 @@ async def api_complete_batch(request):
 
     user_id = body.get("user_id")
     batch_key = body.get("batch_key")
+    batch_label = body.get("batch_label")
+    topic_title = body.get("topic_title")
 
     if not user_id or not batch_key:
         return web.json_response({"error": "Missing user_id or batch_key"}, status=400)
@@ -456,6 +459,19 @@ async def api_complete_batch(request):
     if batch_key not in completed:
         completed.append(batch_key)
         await save_user_data(main_client, user_id, data)
+
+    # Trigger delivery routing:
+    # If Group delivery: Videos went to group -> sends completion notice + AdsGram ad to PM (0 ads in group)
+    # If PM delivery: Videos went to PM -> sends AdsGram ad at bottom of batch in PM
+    custom_group = data.get("custom_group")
+    batch_title = f"{topic_title} - {batch_label}" if (topic_title and batch_label) else (batch_label or topic_title)
+    if main_client:
+        asyncio.create_task(handle_batch_completion_delivery(
+            client=main_client,
+            user_id=user_id,
+            custom_group=custom_group,
+            batch_title=batch_title
+        ))
 
     return web.json_response({"success": True, "completed_batches": completed}, headers={"Access-Control-Allow-Origin": "*"})
 
