@@ -118,20 +118,12 @@ def parse_user_data_message(text: str) -> dict:
 
 async def find_pinned_data_message(client: TelegramClient, user_id: int):
     """
-    Looks for the pinned message in user DM that contains PINNED_DB_TAG.
-    Returns (message_obj, parsed_data) or (None, None).
+    User profiles are stored in local persistent disk storage (user_data_store.json)
+    and replicated to BACKUP_CHANNEL_ID. Telegram MTProto restricts bot users from
+    invoking GetHistoryRequest in 1-on-1 private chats.
     """
-    try:
-        # Fetch pinned messages or recent messages in user DM (Allowed for bot in 1-on-1 DM)
-        messages = await client.get_messages(user_id, limit=20)
-        for msg in messages:
-            if msg.message and PINNED_DB_TAG in msg.message:
-                parsed = parse_user_data_message(msg.message)
-                if parsed:
-                    return msg, parsed
-    except Exception as e:
-        logger.warning(f"Could not check pinned messages for user {user_id}: {e}")
     return None, None
+
 
 
 async def search_backup_channel(client: TelegramClient, user_id: int) -> dict:
