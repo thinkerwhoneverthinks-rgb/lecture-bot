@@ -148,14 +148,33 @@ if (tg) {
     applyTheme(currentTheme);
 }
 
-// User Identification (persists user ID in localStorage to survive refreshes)
+// User Identification: Checks Telegram WebApp, URL parameters, hash data, and localStorage
+const urlParams = new URLSearchParams(window.location.search);
+const queryUserId = urlParams.get('user_id');
+
 let resolvedUserId = tg?.initDataUnsafe?.user?.id;
-if (resolvedUserId) {
+if (!resolvedUserId && queryUserId && !isNaN(parseInt(queryUserId, 10))) {
+    resolvedUserId = parseInt(queryUserId, 10);
+}
+
+// Fallback: extract user id from location.hash if embedded
+if (!resolvedUserId && location.hash) {
+    try {
+        const hashMatch = decodeURIComponent(location.hash).match(/"id":\s*(\d+)/);
+        if (hashMatch && hashMatch[1]) {
+            resolvedUserId = parseInt(hashMatch[1], 10);
+        }
+    } catch (_) {}
+}
+
+if (resolvedUserId && resolvedUserId !== 123456789) {
     try { localStorage.setItem('cached_telegram_user_id', String(resolvedUserId)); } catch (_) {}
 } else {
     try {
         const cached = localStorage.getItem('cached_telegram_user_id');
-        if (cached) resolvedUserId = parseInt(cached, 10);
+        if (cached && !isNaN(parseInt(cached, 10)) && parseInt(cached, 10) !== 123456789) {
+            resolvedUserId = parseInt(cached, 10);
+        }
     } catch (_) {}
 }
 const USER_ID = resolvedUserId || 123456789;

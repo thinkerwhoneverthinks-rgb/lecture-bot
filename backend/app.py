@@ -638,10 +638,24 @@ def setup_bot_handlers(client: TelegramClient):
             "📚 Lectures are stored in high quality and forwarded directly into your personal private channel/group.\n\n"
             "⚡ **Quick 2-Step Setup:**\n"
             "1️⃣ Add this bot as an **Admin** in your private channel or group.\n"
-            "2️⃣ Tap the **🚀 Lectures** button at the bottom of the chat, enter your channel username/ID in **Settings ⚙️**, and pick your lectures!\n\n"
+            "2️⃣ Tap the **🚀 Open Lectures App** button below, enter your channel username/ID in **Settings ⚙️**, and pick your lectures!\n\n"
             "⚠️ *Your progress & history is safely pinned in this chat. Please do not unpin it!*"
         )
-        await event.respond(welcome_text)
+        buttons = []
+        if WEBAPP_URL:
+            app_url = f"{WEBAPP_URL}?user_id={user_id}"
+            buttons.append([Button.url("🚀 Open Lectures App", app_url)])
+            try:
+                from telethon.tl.functions.bots import SetBotMenuButtonRequest
+                from telethon import types
+                await client(SetBotMenuButtonRequest(
+                    user_id=await client.get_input_entity(user_id),
+                    button=types.BotMenuButton(text="🚀 Lectures", url=app_url)
+                ))
+            except Exception as e:
+                logger.debug(f"User menu button setup: {e}")
+
+        await event.respond(welcome_text, buttons=buttons if buttons else None)
 
     @client.on(events.NewMessage(pattern=r'^/rescan'))
     async def rescan_handler(event):

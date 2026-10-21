@@ -110,6 +110,21 @@ async def fetch_and_send_adsgram_ad(client, user_id: int) -> bool:
         return False
 
 
+async def send_fallback_sponsor(client, user_id: int):
+    """Fallback sponsor post shown when AdsGram API returns no inventory or error."""
+    fallback_text = (
+        "📢 <b>Sponsored</b>\n\n"
+        "🌟 <i>Looking for more premium study resources and high-yield notes? Check out our official updates channel!</i>"
+    )
+    try:
+        await client.send_message(user_id, fallback_text, parse_mode='html')
+        logger.info(f"📢 Delivered fallback sponsor post to user {user_id} PM.")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to send fallback sponsor to user {user_id}: {e}")
+        return False
+
+
 async def handle_batch_completion_delivery(client, user_id: int, custom_group: str, batch_title: str = None):
     """
     Enforces the routing rule upon batch completion:
@@ -140,8 +155,10 @@ async def handle_batch_completion_delivery(client, user_id: int, custom_group: s
         except Exception as e:
             logger.error(f"❌ Failed to send PM completion notification to user {user_id}: {e}")
 
-        # 2. Send AdsGram Sponsored Post to personal Bot PM
-        await fetch_and_send_adsgram_ad(client, user_id)
+        # 2. Send AdsGram Sponsored Post to personal Bot PM (falls back to sponsor post if no inventory)
+        ad_sent = await fetch_and_send_adsgram_ad(client, user_id)
+        if not ad_sent:
+            await send_fallback_sponsor(client, user_id)
 
     else:
         # Bot PM Delivery:
@@ -156,5 +173,7 @@ async def handle_batch_completion_delivery(client, user_id: int, custom_group: s
         except Exception as e:
             logger.error(f"❌ Failed to send PM completion confirmation to user {user_id}: {e}")
 
-        # 2. Append AdsGram Sponsored Post at the bottom of the batch in user PM
-        await fetch_and_send_adsgram_ad(client, user_id)
+        # 2. Append AdsGram Sponsored Post at the bottom of the batch in user PM (falls back to sponsor post if no inventory)
+        ad_sent = await fetch_and_send_adsgram_ad(client, user_id)
+        if not ad_sent:
+            await send_fallback_sponsor(client, user_id)
