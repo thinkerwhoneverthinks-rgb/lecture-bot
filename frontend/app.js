@@ -844,12 +844,32 @@ function renderCatalog(catalog) {
         const content = document.createElement('div');
         content.className = 'topic-content';
 
-        // Sections (Subfolder Dividers e.g. '📌 Main Lectures', 'NCERT', etc.)
-        topic.sections.forEach(section => {
+        // Sections (Subfolder Chapters e.g. pinned messages 1, 2, 3, 4 - Unexpanded / Collapsed by default)
+        topic.sections.forEach((section, sIdx) => {
+            const secAccordion = document.createElement('div');
+            secAccordion.className = 'section-accordion';
+
             const secHeader = document.createElement('div');
-            secHeader.className = 'section-divider-header';
-            secHeader.innerHTML = `<span>📁 ${escapeHtml(section.name)}</span>`;
-            content.appendChild(secHeader);
+            secHeader.className = 'section-header';
+            secHeader.innerHTML = `
+                <div class="section-title-group">
+                    <span>📁</span>
+                    <span class="section-name">${escapeHtml(section.name)}</span>
+                </div>
+                <div class="section-right-group">
+                    <span class="section-count-pill">${section.lectures?.length || 0} Lectures</span>
+                    <span class="section-toggle-icon">▼</span>
+                </div>
+            `;
+
+            // Toggle section accordion open / closed
+            secHeader.addEventListener('click', (e) => {
+                e.stopPropagation();
+                secAccordion.classList.toggle('open');
+            });
+
+            const secContent = document.createElement('div');
+            secContent.className = 'section-content';
 
             // Batches (Batch 1-5, Batch 6-10)
             const batchKeys = Object.keys(section.batches || {});
@@ -867,7 +887,7 @@ function renderCatalog(catalog) {
                     <span class="batch-label">🗂️ ${bLabel} (${batchLectures.length} Lectures)</span>
                     <div class="batch-actions">
                         ${isCompleted ? '<span class="batch-done-badge">Sent ✓</span>' : ''}
-                        <button class="btn-send-batch" id="btn-batch-${tIdx}-${bIdx}">
+                        <button class="btn-send-batch" id="btn-batch-${tIdx}-${sIdx}-${bIdx}">
                             ${isCompleted ? 'Resend' : 'Send Batch'}
                         </button>
                     </div>
@@ -891,18 +911,21 @@ function renderCatalog(catalog) {
 
                 batchBox.appendChild(bHeader);
 
-                // Individual Lectures
+                // Individual Lectures & Text Notes
                 batchLectures.forEach(lec => {
                     const isSent = userData.sent_lectures?.includes(lec.id);
                     const lecEl = document.createElement('div');
                     lecEl.className = 'lecture-item';
+                    const icon = lec.is_text ? '📝' : (lec.file_name?.toLowerCase().endsWith('.pdf') ? '📄' : '🎬');
+                    const sizeText = lec.is_text ? 'Note' : `${lec.file_size_mb} MB`;
+
                     lecEl.innerHTML = `
                         <div class="lecture-left">
-                            <span class="lecture-icon">🎬</span>
+                            <span class="lecture-icon">${icon}</span>
                             <span class="lecture-title-text" title="${escapeHtml(lec.title)}">${escapeHtml(lec.title)}</span>
                         </div>
                         <div class="lecture-right">
-                            <span class="lecture-size-pill">${lec.file_size_mb} MB</span>
+                            <span class="lecture-size-pill">${sizeText}</span>
                             <span class="lecture-status-icon" id="lec-status-${lec.id}" style="color: ${isSent ? '#10b981' : '#64748b'};">
                                 ${isSent ? '✓' : '○'}
                             </span>
@@ -911,16 +934,20 @@ function renderCatalog(catalog) {
                     batchBox.appendChild(lecEl);
                 });
 
-                content.appendChild(batchBox);
+                secContent.appendChild(batchBox);
 
-                // Interleave 300x250 In-Feed Ad Banner between batches inside the topic
-                if (window.adManager) {
-                    const adCard = window.adManager.createInFeedAdCard(`t${tIdx}-b${bIdx}`);
+                // Interleave 300x250 In-Feed Ad Banner between batches inside the chapter if configured
+                if (window.adManager && typeof window.adManager.createInFeedAdCard === 'function') {
+                    const adCard = window.adManager.createInFeedAdCard(`t${tIdx}-s${sIdx}-b${bIdx}`);
                     if (adCard) {
-                        content.appendChild(adCard);
+                        secContent.appendChild(adCard);
                     }
                 }
             });
+
+            secAccordion.appendChild(secHeader);
+            secAccordion.appendChild(secContent);
+            content.appendChild(secAccordion);
         });
 
         topicCard.appendChild(header);
@@ -931,14 +958,61 @@ function renderCatalog(catalog) {
 
 function handleSearchFilter(e) {
     const query = e.target.value.toLowerCase().trim();
-    const items = document.querySelectorAll('.lecture-item');
+    const topicCards = document.querySelectorAll('.topic-accordion');
 
-    items.forEach(item => {
-        const title = item.querySelector('.lecture-title-text').textContent.toLowerCase();
-        if (!query || title.includes(query)) {
-            item.style.display = 'flex';
-        } else {
-            item.style.display = 'none';
+    if (!query) {
+        document.querySelectorAll('.lecture-item').forEach(el => el.style.display = 'flex');
+        document.querySelectorAll('.batch-card').forEach(el => el.style.display = 'block');
+        document.querySelectorAll('.section-accordion').forEach(el => {
+            el.style.display = 'block';
+            el.classList.remove('open');
+        });
+        topicCards.forEach(t => t.style.display = 'block');
+        return;
+    }
+
+    topicCards.forEach(tCard => {
+        let topicHasMatch = false;
+        const topicTitle = tCard.querySelector('.topic-name')?.textContent.toLowerCase() || '';
+        const topicMatches = topicTitle.includes(query);
+
+        const secAccordions = tCard.querySelectorAll('.section-accordion');
+        secAccordions.forEach(secAcc => {
+            let secHasMatch = topicMatches;
+            const secName = secAcc.querySelector('.section-name')?.textContent.toLowerCase() || '';
+            const secMatches = secName.includes(query);
+
+            const batchCards = secAcc.querySelectorAll('.batch-card');
+            batchCards.forEach(bCard => {
+                let batchHasMatch = topicMatches || secMatches;
+                const batchLabel = bCard.querySelector('.batch-label')?.textContent.toLowerCase() || '';
+                const batchMatches = batchLabel.includes(query);
+
+                const items = bCard.querySelectorAll('.lecture-item');
+                items.forEach(item => {
+                    const title = item.querySelector('.lecture-title-text')?.textContent.toLowerCase() || '';
+                    if (topicMatches || secMatches || batchMatches || title.includes(query)) {
+                        item.style.display = 'flex';
+                        batchHasMatch = true;
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+
+                bCard.style.display = batchHasMatch ? 'block' : 'none';
+                if (batchHasMatch) secHasMatch = true;
+            });
+
+            secAcc.style.display = secHasMatch ? 'block' : 'none';
+            if (secHasMatch) {
+                topicHasMatch = true;
+                secAcc.classList.add('open');
+            }
+        });
+
+        tCard.style.display = topicHasMatch ? 'block' : 'none';
+        if (topicHasMatch) {
+            tCard.classList.add('open');
         }
     });
 }

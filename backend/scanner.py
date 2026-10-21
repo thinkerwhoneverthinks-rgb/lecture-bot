@@ -72,6 +72,9 @@ def get_real_file_info(message, sequence_num):
             elif isinstance(attr, DocumentAttributeVideo):
                 file_type = "video"
 
+    if not file_name and getattr(message, 'photo', None):
+        file_name = f"Photo_{sequence_num}.jpg"
+
     # Priority 2: Use caption if file_name is missing or generic
     caption = (message.message or "").strip()
     generic_names = ["video.mp4", "document.pdf", "file", "document", ""]
@@ -396,23 +399,46 @@ async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: i
                 messages_to_process = all_raw
 
         for msg in messages_to_process:
-            # 1. Detect subfolder text dividers if present
+            is_pinned = bool(getattr(msg, 'pinned', False))
+
+            # 1. Text message (no media file)
             if msg.message and not msg.media:
                 text = msg.message.strip()
-                if len(text) < 80:
-                    clean_name = text.strip("-=*# \n")
+                if is_pinned:
+                    # ONLY PINNED text messages become a chapter / topic divider
+                    clean_name = text.split("\n")[0].strip("-=*# \n")
                     if current_section["lectures"]:
                         sections.append(current_section)
-                    sec_name = clean_name if (not ch_name or ch_name == "General") else (f"{ch_name} • {clean_name}" if clean_name else ch_name)
+                    sec_name = clean_name or f"Chapter {len(sections) + 1}"
                     current_section = {
-                        "name": sec_name or ch_name,
+                        "name": sec_name,
                         "lectures": []
                     }
                     sequence_in_section = 1
                     continue
+                else:
+                    # Unpinned text message -> acts as a text note/message that goes along with video and pdf
+                    first_line = text.split("\n")[0].strip()[:60]
+                    lecture_item = {
+                        "id": f"{source_group}_{msg.id}",
+                        "message_id": msg.id,
+                        "thread_id": topic_id or 0,
+                        "from_chat": source_group,
+                        "title": f"📝 {first_line or 'Note'}",
+                        "caption": text,
+                        "file_name": "Note.txt",
+                        "file_size_mb": 0.0,
+                        "file_size_bytes": len(text.encode("utf-8")),
+                        "sequence_num": sequence_in_section,
+                        "is_text": True
+                    }
+                    current_section["lectures"].append(lecture_item)
+                    sequence_in_section += 1
+                    total_lectures += 1
+                    continue
 
-            # 2. Detect media files
-            if msg.media and (msg.video or msg.document):
+            # 2. Detect media files (video, document, pdf, audio, photo)
+            if msg.media and (msg.video or msg.document or msg.photo):
                 info = get_real_file_info(msg, sequence_in_section)
                 lecture_item = {
                     "id": f"{source_group}_{msg.id}",
@@ -424,7 +450,8 @@ async def scan_chapter(client: TelegramClient, chapter: dict, default_chat_id: i
                     "file_name": info["file_name"],
                     "file_size_mb": info["file_size_mb"],
                     "file_size_bytes": info["file_size_bytes"],
-                    "sequence_num": sequence_in_section
+                    "sequence_num": sequence_in_section,
+                    "is_text": False
                 }
                 current_section["lectures"].append(lecture_item)
                 sequence_in_section += 1
@@ -633,7 +660,7 @@ async def scan_master_forum(client: TelegramClient, forum_chat_id: int = FORUM_C
                 logger.info(f"📂 Scanning topic: '{topic_title}' (thread {thread_id})...")
 
                 auto_sections, auto_count = await scan_chapter(client, {
-                    "name": "General",
+                    "name": topic_title,
                     "source_group": forum_chat_id,
                     "topic_id": thread_id
                 }, forum_chat_id)
