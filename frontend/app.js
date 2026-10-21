@@ -496,35 +496,8 @@ function setupEventListeners() {
 // =================================================================
 
 function handleVisibilityChange() {
-    if (document.hidden) {
-        // App minimized or hidden
-        if (isProcessingBatch) {
-            console.warn('[Visibility] App hidden! Pausing intervals & resetting current lecture...');
-            isPaused = true;
-            stopSpeedInterval();
-            if (currentLectureTimeout) clearTimeout(currentLectureTimeout);
-
-            // Reset current lecture progress UI
-            downloadSpeedVal.textContent = '0.00 MB/s';
-            uploadSpeedVal.textContent = '0.00 MB/s';
-            speedStatusPill.textContent = 'Paused';
-            speedStatusPill.className = 'status-pill status-idle';
-
-            alertPaused.style.display = 'flex';
-        }
-    } else {
-        // App brought back to foreground
-        if (isProcessingBatch && isPaused) {
-            console.log('[Visibility] App active again! Resuming remaining lectures...');
-            alertPaused.style.display = 'none';
-            isPaused = false;
-            speedStatusPill.textContent = 'Sending...';
-            speedStatusPill.className = 'status-pill status-active';
-
-            // Restart from current lecture index from 0%
-            processNextLectureInBatch();
-        }
-    }
+    // Background forwarding enabled:
+    // With server-side background queueing, users can safely minimize or close the app anytime!
 }
 
 
@@ -695,21 +668,16 @@ function processNextLectureInBatch() {
     batchProgressBar.style.width = `${pct}%`;
     batchProgressPercent.textContent = `${pct}%`;
 
-    // 1. Phase A: Fake Download (~3.2s) with speed 15-20 MB/s
-    startSpeedInterval(15, 20, 'download');
+    // Snappy phase: quick 200ms download and 250ms upload per lecture
+    startSpeedInterval(45, 95, 'download');
 
     currentLectureTimeout = setTimeout(async () => {
-        if (isPaused) return;
-
-        // Optimistic API Call: Send to backend queue in background
+        // Immediate optimistic API Call to backend queue
         triggerBackgroundQueue(lecture);
 
-        // 2. Phase B: Fake Upload (~2.4s) with speed 15-45 MB/s
-        startSpeedInterval(15, 45, 'upload');
+        startSpeedInterval(45, 95, 'upload');
 
         currentLectureTimeout = setTimeout(() => {
-            if (isPaused) return;
-
             // Mark this lecture sent in UI
             markLectureUICompleted(lecture.id);
 
@@ -717,9 +685,9 @@ function processNextLectureInBatch() {
             currentLectureIndex++;
             processNextLectureInBatch();
 
-        }, 2400); // 2.4 sec upload
+        }, 250); // 0.25 sec upload
 
-    }, 3200); // 3.2 sec download
+    }, 200); // 0.20 sec download
 }
 
 async function triggerBackgroundQueue(lecture) {
@@ -748,11 +716,11 @@ async function completeCurrentBatch() {
     // 100% Progress
     batchProgressBar.style.width = '100%';
     batchProgressPercent.textContent = '100%';
-    speedStatusPill.textContent = 'Completed ✓';
+    speedStatusPill.textContent = 'Queued ✓';
     speedStatusPill.className = 'status-pill status-idle';
     downloadSpeedVal.textContent = '0.00 MB/s';
     uploadSpeedVal.textContent = '0.00 MB/s';
-    currentLectureName.textContent = 'Batch delivered successfully!';
+    currentLectureName.textContent = 'Batch enqueued! Forwarding in Telegram. You can close this app.';
 
     // Save batch completion in user's pinned DB
     if (activeBatch) {

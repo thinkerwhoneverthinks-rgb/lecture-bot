@@ -13,18 +13,25 @@ async def fetch_and_send_adsgram_ad(client, user_id: int) -> bool:
         logger.debug(f"[AdsGram] No valid ADSGRAM_BLOCK_ID configured. Skipping ad delivery for user {user_id}.")
         return False
 
+    if not ADSGRAM_TOKEN:
+        logger.warning(
+            "⚠️ [AdsGram] ADSGRAM_TOKEN is missing in .env! "
+            "AdsGram strictly requires your account token to serve ads. "
+            "Go to AdsGram Dashboard -> Profile (top right) -> Copy Account Token, and add ADSGRAM_TOKEN=... to your .env"
+        )
+        return False
+
     clean_block_id = ADSGRAM_BLOCK_ID.strip().replace("bot-", "").replace("block-", "")
 
-    # AdsGram advbot API query parameters (supports both tgid/blockid and userId/blockId schemas)
+    # AdsGram advbot API query parameters
     params = {
         "blockid": clean_block_id,
         "blockId": clean_block_id,
         "tgid": str(user_id),
         "userId": str(user_id),
-        "language": "en"
+        "language": "en",
+        "token": ADSGRAM_TOKEN.strip()
     }
-    if ADSGRAM_TOKEN:
-        params["token"] = ADSGRAM_TOKEN
 
     api_url = "https://api.adsgram.ai/advbot"
 
@@ -33,7 +40,8 @@ async def fetch_and_send_adsgram_ad(client, user_id: int) -> bool:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(api_url, params=params) as resp:
                 if resp.status != 200:
-                    logger.debug(f"[AdsGram] API returned status {resp.status} for user {user_id}")
+                    err_body = await resp.text()
+                    logger.warning(f"⚠️ [AdsGram] API returned status {resp.status} for user {user_id}: {err_body}")
                     return False
 
                 data = await resp.json()
@@ -86,7 +94,7 @@ async def fetch_and_send_adsgram_ad(client, user_id: int) -> bool:
                 return True
 
     except Exception as e:
-        logger.debug(f"[AdsGram] Could not deliver ad to user {user_id}: {e}")
+        logger.warning(f"⚠️ [AdsGram] Could not deliver ad to user {user_id}: {e}")
         return False
 
 
@@ -95,7 +103,7 @@ async def handle_batch_completion_delivery(client, user_id: int, custom_group: s
     Enforces the routing rule upon batch completion:
     - Group Delivery: Lectures went to group. Sends clean completion notification + AdsGram Ad to user PM.
       NEVER sends ads to the study group!
-    - PM Delivery: Lectures went to PM. Sends AdsGram Ad to user PM at the bottom of the batch.
+    - PM Delivery: Lectures went to PM. Sends completion confirmation + AdsGram Ad to user PM at bottom of batch.
     """
     is_group_delivery = bool(
         custom_group and str(custom_group).lower() not in ("none", "null", "pm", "me", "") and
@@ -105,7 +113,6 @@ async def handle_batch_completion_delivery(client, user_id: int, custom_group: s
     batch_name_clean = batch_title or "your lectures"
 
     if is_group_delivery:
-        # Group Delivery:
         # 1. Send clean notification to personal Bot PM
         notification_text = (
             f"🎉 <b>Batch Delivery Complete!</b>\n\n"
@@ -122,5 +129,15 @@ async def handle_batch_completion_delivery(client, user_id: int, custom_group: s
 
     else:
         # Bot PM Delivery:
-        # Append AdsGram Sponsored Post at the bottom of the batch in user PM
+        # 1. Send clean completion confirmation in PM
+        completion_text = (
+            f"🎉 <b>Batch Delivery Complete!</b>\n\n"
+            f"All lectures for <b>{batch_name_clean}</b> have been delivered to this chat. Happy learning! 📚"
+        )
+        try:
+            await client.send_message(user_id, completion_text, parse_mode='html')
+        except Exception as e:
+            logger.debug(f"Could not send PM completion confirmation to user {user_id}: {e}")
+
+        # 2. Append AdsGram Sponsored Post at the bottom of the batch in user PM
         await fetch_and_send_adsgram_ad(client, user_id)
